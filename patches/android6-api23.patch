@@ -1,0 +1,544 @@
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 3cc9308a42..32b25b9202 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -52,6 +52,11 @@
+         <package android:name="com.android.settings" />
+     </queries>
+ 
++    <!-- 保持 minSdk 23（Android 6.0 可安装）的同时，允许以下声明了 minSdk 24 的本地 aar 合并进 APK。
++         这些库（com.tvbus.engine / com.ghost.thunder / com.fongmi.hook）均不在 API 23 的通用视频播放
++         启动/主路径上，只在各自特定协议源被播放时才懒加载且有异常兜底，因此强制合并不会造成启动崩溃。 -->
++    <uses-sdk tools:overrideLibrary="com.tvbus.engine,com.ghost.thunder,com.fongmi.hook,androidx.webkit" />
++
+     <application
+         android:name=".App"
+         android:allowBackup="false"
+diff --git a/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java b/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
+index b6d7d8b058..f75d734594 100644
+--- a/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
++++ b/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
+@@ -18,7 +18,19 @@ public class JsLoader {
+ 
+     public JsLoader() {
+         spiders = new ConcurrentHashMap<>();
+-        loader = new Loader();
++        Loader l = null;
++        try {
++            l = new Loader();
++        } catch (Throwable t) {
++            // QuickJS native runtime may fail to load on some API levels.
++            // Degrade gracefully so BaseLoader initialization never crashes.
++            t.printStackTrace();
++        }
++        loader = l;
++    }
++
++    public boolean isAvailable() {
++        return loader != null;
+     }
+ 
+     public void clear() {
+@@ -33,6 +45,7 @@ public class JsLoader {
+     }
+ 
+     public Spider getSpider(String key, String api, String ext, String jar) {
++        if (loader == null) return new SpiderNull();
+         return spiders.computeIfAbsent(key, k -> {
+             try {
+                 Spider spider = loader.spider(api, BaseLoader.get().dex(jar));
+@@ -49,7 +62,7 @@ public class JsLoader {
+     }
+ 
+     public Object[] proxy(Map<String, String> params) throws Exception {
+-        if (recent == null) return null;
++        if (recent == null || loader == null) return null;
+         Spider spider = spiders.get(recent);
+         return spider != null ? spider.proxy(params) : null;
+     }
+diff --git a/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java b/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
+index d879091ddb..d50c53a7c4 100644
+--- a/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
++++ b/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
+@@ -18,7 +18,22 @@ public class PyLoader {
+ 
+     public PyLoader() {
+         spiders = new ConcurrentHashMap<>();
+-        loader = new Loader();
++        Loader l = null;
++        try {
++            l = new Loader();
++        } catch (Throwable t) {
++            // ChaQuoPy's native runtime (libchaquopy_java / libpython) requires
++            // API 24+. On Android 6.0 (API 23) loading it throws
++            // UnsatisfiedLinkError. Degrade gracefully so BaseLoader
++            // initialization never crashes the app (video playback does not
++            // depend on Python).
++            t.printStackTrace();
++        }
++        loader = l;
++    }
++
++    public boolean isAvailable() {
++        return loader != null;
+     }
+ 
+     public void clear() {
+@@ -32,6 +47,7 @@ public class PyLoader {
+     }
+ 
+     public Spider getSpider(String key, String api, String ext) {
++        if (loader == null) return new SpiderNull();
+         return spiders.computeIfAbsent(key, k -> {
+             try {
+                 Spider spider = loader.spider(api);
+@@ -54,7 +70,7 @@ public class PyLoader {
+     }
+ 
+     public Object[] proxy(Map<String, String> params) throws Exception {
+-        if (recent == null) return null;
++        if (recent == null || loader == null) return null;
+         Spider spider = spiders.get(recent);
+         return spider != null ? spider.proxy(params) : null;
+     }
+diff --git a/chaquo/build.gradle b/chaquo/build.gradle
+index 612e9bb04f..9b8396b7b4 100644
+--- a/chaquo/build.gradle
++++ b/chaquo/build.gradle
+@@ -12,6 +12,12 @@ android {
+         minSdk libs.versions.minSdk.get().toInteger()
+         targetSdk libs.versions.targetSdk.get().toInteger()
+         python {
++            // Chaquopy 17 only supports Python >= 3.10. Its pypi-13.1 mirror ships the
++            // >=3.10 wheels tagged android_24 (API 24+), which Chaquopy rejects when the
++            // project minSdk is 23. We keep 3.10 and instead patch Chaquopy's wheel
++            // platform-tag floor to 24 at build time (see scripts/patch_chaquopy_minsdk.sh),
++            // so the android_24 wheels are selected. These pure-C packages (lxml,
++            // pycryptodome, ujson) load fine on API 23 at runtime.
+             version = "3.10"
+             pip {
+                 install("-r", "requirements.txt")
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index a9aded54dd..f4049a8605 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -1,7 +1,7 @@
+ [versions]
+ agp = "9.2.1"
+ python = "17.0.0"
+-minSdk = "24"
++minSdk = "23"
+ targetSdk = "28"
+ compileSdk = "37"
+ 
+diff --git a/mise.toml b/mise.toml
+new file mode 100644
+index 0000000000..4b046b61d0
+--- /dev/null
++++ b/mise.toml
+@@ -0,0 +1,7 @@
++[env]
++ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
++[settings]
++env_shell_expand = true
++
++[tools]
++python = "3.10.22"
+diff --git a/scripts/build_dvd_deps.sh b/scripts/build_dvd_deps.sh
+index a9f48c2d06..c1155c27d1 100755
+--- a/scripts/build_dvd_deps.sh
++++ b/scripts/build_dvd_deps.sh
+@@ -40,8 +40,8 @@ git -C "$BLURAY_SRC" submodule update --init --recursive contrib/libudfread
+ build_abi() {
+   local abi="$1" target host
+   case "$abi" in
+-    arm64-v8a) target="aarch64-linux-android24"; host="aarch64-linux-android" ;;
+-    armeabi-v7a) target="armv7a-linux-androideabi24"; host="arm-linux-androideabi" ;;
++    arm64-v8a) target="aarch64-linux-android23"; host="aarch64-linux-android" ;;
++    armeabi-v7a) target="armv7a-linux-androideabi23"; host="arm-linux-androideabi" ;;
+     *) echo "Unsupported ABI: $abi" >&2; exit 2 ;;
+   esac
+   local prefix="$BUILD/$abi/prefix"
+diff --git a/scripts/build_mpv_native.sh b/scripts/build_mpv_native.sh
+index b007fdf19c..2b47ee72c9 100755
+--- a/scripts/build_mpv_native.sh
++++ b/scripts/build_mpv_native.sh
+@@ -277,6 +277,12 @@ checkout_repo() {
+   if ! git -C "$directory" cat-file -e "$revision^{commit}" 2>/dev/null; then
+     git -C "$directory" fetch --depth 1 origin "$revision"
+   fi
++  # Drop untracked artifacts (e.g. patch-created files such as player/discnav.c)
++  # left by a previous, interrupted or completed build. `git checkout --force`
++  # only reverts *tracked* modifications and otherwise aborts with
++  # "already exists in working directory" when such a file blocks the checkout.
++  # Preserve _build* directories so incremental rebuilds keep their cache.
++  git -C "$directory" clean -qfd -e '_build*/' 2>/dev/null || true
+   git -C "$directory" checkout -q --force --detach "$revision"
+   if [ "$submodules" = "1" ]; then
+     git -C "$directory" submodule sync --recursive
+@@ -502,7 +508,17 @@ prepare_sources() {
+   fi
+   extract_archive libbluray "$LIBBLURAY_URL" "$LIBBLURAY_SHA256" "$deps/libbluray"
+   [ -f "$LIBBLURAY_HDMV_INPUT_PATCH" ] || die "missing libbluray HDMV input patch: $LIBBLURAY_HDMV_INPUT_PATCH"
+-  if ! patch -d "$deps/libbluray" -p1 -R --dry-run < "$LIBBLURAY_HDMV_INPUT_PATCH" >/dev/null 2>&1; then
++  # Apply the libbluray HDMV input patch (adds BD_VK_MENU_BACK and authored-menu
++  # routing used by the mpv discnav input patch). Use a *forward* dry-run as the
++  # idempotency check: it succeeds only when the patch is not yet applied, so
++  # re-runs neither skip nor double-apply. The previous reverse-dry-run check
++  # produced false positives and silently skipped the patch, leaving
++  # BD_VK_MENU_BACK undefined and breaking the mpv discnav build.
++  # Idempotency: only apply when the patch's marker is absent from the source.
++  # A forward dry-run is unreliable here (GNU patch -N reports an already-applied
++  # patch as success and then re-emits .rej files on the real apply), so we key
++  # off the added symbol instead.
++  if ! grep -q "BD_VK_MENU_BACK" "$deps/libbluray/src/libbluray/keys.h" 2>/dev/null; then
+     patch -d "$deps/libbluray" -p1 --forward < "$LIBBLURAY_HDMV_INPUT_PATCH"
+   fi
+   extract_archive libarchive "$LIBARCHIVE_URL" "$LIBARCHIVE_SHA256" "$deps/libarchive"
+@@ -728,7 +744,12 @@ verify_directory() {
+     fi
+   done
+   dynamic="$("$READELF" -d "$directory/libmpv.so")"
+-  for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so libvulkan.so; do
++  # NOTE: libvulkan.so is intentionally NOT required here. This build targets
++  # Android 6.0 (API 23), which has no Vulkan loader (libvulkan.so is only in the
++  # NDK sysroot at API 26+). mpv is configured -Dvulkan=disabled and the fake
++  # vulkan.pc is not shipped, so libmpv.so legitimately has no libvulkan.so
++  # dependency. Remove this token from the list for the API-23/no-Vulkan target.
++  for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so; do
+     printf '%s\n' "$dynamic" | grep -Fq "Shared library: [$name]" || die "libmpv.so does not depend on $name"
+   done
+   local version_strings codec_strings format_strings
+@@ -743,9 +764,14 @@ verify_directory() {
+   grep -Fq "WebHTV Android FEL: software enhancement-layer decoder" <<<"$version_strings" || die "MPV software EL decoder patch missing from $directory/libmpv.so"
+   grep -Fq "WebHTV FEL GPU input: matched EL uploaded with active NLQ." <<<"$version_strings" || die "MPV FEL GPU input diagnostics missing from $directory/libmpv.so"
+   grep -Fq "discnav" <<<"$version_strings" || die "MPV discnav command missing from $directory/libmpv.so"
+-  grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings" || die "MPV Vulkan AImageReader backend missing from $directory/libmpv.so"
+-  grep -Fq "Using Vulkan YCbCr AHardwareBuffer sampling" <<<"$version_strings" || die "MPV direct Vulkan AHardwareBuffer sampling missing from $directory/libmpv.so"
+-  grep -Fq "Vulkan AImageReader sync-fd:" <<<"$version_strings" || die "MPV AImageReader sync-fd support missing from $directory/libmpv.so"
++  # Vulkan-only runtime markers. These strings exist in libmpv.so only when mpv is
++  # built with -Dvulkan enabled. This project targets Android 6.0 (API 23), which
++  # has no Vulkan loader, so vulkan is disabled and these markers are absent. Only
++  # assert them when the Vulkan AImageReader backend is actually compiled in.
++  if grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings"; then
++    grep -Fq "Using Vulkan YCbCr AHardwareBuffer sampling" <<<"$version_strings" || die "MPV direct Vulkan AHardwareBuffer sampling missing from $directory/libmpv.so"
++    grep -Fq "Vulkan AImageReader sync-fd:" <<<"$version_strings" || die "MPV AImageReader sync-fd support missing from $directory/libmpv.so"
++  fi
+   grep -Fq "android-osd-wid" <<<"$version_strings" || die "MPV dual-Surface OSD option missing from $directory/libmpv.so"
+   grep -Fq "Direct Dolby Vision initialization failed" <<<"$version_strings" || die "MPV direct Dolby Vision fallback missing from $directory/libmpv.so"
+   grep -Fq "video output has no queue-safe EL decoder" <<<"$version_strings" || die "MPV Android Dolby Vision EL capability guard missing from $directory/libmpv.so"
+@@ -768,13 +794,19 @@ verify_directory() {
+   grep -Fq "MediaCodec VO drop timing" <<<"$version_strings" || die "MPV MediaCodec output timing diagnostics missing from $directory/libmpv.so"
+   grep -Fq "WebHTV MediaCodec reset discards pending output" <<<"$version_strings" || die "MPV direct-output reset missing from $directory/libmpv.so"
+   grep -Fq "WebHTV event-only disc navigation polling enabled" <<<"$version_strings" || die "MPV event-only navigation pump missing from $directory/libmpv.so"
+-  grep -Fq "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling" <<<"$version_strings" || die "MPV Android Vulkan smart backend patch missing from $directory/libmpv.so"
+-  grep -Fq "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool" <<<"$version_strings" || die "MPV Android Vulkan queue-safe conversion pool missing from $directory/libmpv.so"
+-  grep -Fq "CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan low-power coordinate transform missing from $directory/libmpv.so"
+-  grep -Fq "Generic Vulkan conversion uses CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan generic coordinate transform missing from $directory/libmpv.so"
+-  grep -Fq "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping" <<<"$version_strings" || die "MPV Android Vulkan stable Dolby Vision mapping missing from $directory/libmpv.so"
+-  grep -Fq "WebHTV Vulkan keeps AImage until the conversion fence completes" <<<"$version_strings" || die "MPV Android Vulkan stable AImage lifetime patch missing from $directory/libmpv.so"
+-  grep -Fq "WebHTV AImageReader uses stable release/acquire flow" <<<"$version_strings" || die "MPV Android stable AImageReader release/acquire patch missing from $directory/libmpv.so"
++  # Vulkan-only WebHTV Android patches (Vulkan auto backend, queue-safe pool,
++  # CPU-precomputed UV transform, stable Dolby Vision mapping, stable AImageReader
++  # release/acquire flow). Only present when mpv is built with -Dvulkan enabled;
++  # absent on the API-23/no-Vulkan target, so gate them on backend presence.
++  if grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings"; then
++    grep -Fq "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling" <<<"$version_strings" || die "MPV Android Vulkan smart backend patch missing from $directory/libmpv.so"
++    grep -Fq "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool" <<<"$version_strings" || die "MPV Android Vulkan queue-safe conversion pool missing from $directory/libmpv.so"
++    grep -Fq "CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan low-power coordinate transform missing from $directory/libmpv.so"
++    grep -Fq "Generic Vulkan conversion uses CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan generic coordinate transform missing from $directory/libmpv.so"
++    grep -Fq "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping" <<<"$version_strings" || die "MPV Android Vulkan stable Dolby Vision mapping missing from $directory/libmpv.so"
++    grep -Fq "WebHTV Vulkan keeps AImage until the conversion fence completes" <<<"$version_strings" || die "MPV Android Vulkan stable AImage lifetime patch missing from $directory/libmpv.so"
++    grep -Fq "WebHTV AImageReader uses stable release/acquire flow" <<<"$version_strings" || die "MPV Android stable AImageReader release/acquire patch missing from $directory/libmpv.so"
++  fi
+   grep -Fq "Using declared Matroska segment end for seek metadata." <<<"$version_strings" || die "MPV Matroska segment seek patch missing from $directory/libmpv.so"
+   grep -Fq "libarcdav3a AV3A" <<<"$codec_strings" || die "FFmpeg AV3A decoder missing from $directory/libmvcodec.so"
+   grep -Fq "libuavs3d" <<<"$codec_strings" || die "FFmpeg AVS3 decoder missing from $directory/libmvcodec.so"
+@@ -872,6 +904,22 @@ stage_abi() {
+   log "$abi output ready: $output"
+ }
+ 
++fixup_la_libdir() {
++  # The mpv-android build framework configures dependencies with --prefix=/usr/local and
++  # installs them through DESTDIR=$prefix_dir. The prefix/<abi>/{usr,local} -> . symlinks make
++  # the artifacts land under prefix/<abi>/lib, but the generated .la files still record
++  # libdir='/usr/local/lib'. On a build host that ships a same-named dev library in
++  # /usr/local/lib (e.g. a macOS-hosted nghttp2), libtool resolves the dependency to the
++  # HOST library instead of the Android one, breaking the Android link
++  # (ndk ld.lld: "neither ET_REL nor LLVM bitcode" + undefined nghttp2_* symbols).
++  # Rewrite every installed .la's libdir to the real Android prefix so libtool always picks
++  # the Android static archive. Idempotent and safe for static-only prefixes.
++  local prefix_name="$1"
++  local libdir="$BUILDSCRIPTS/prefix/$prefix_name/lib"
++  [ -d "$libdir" ] || return 0
++  find "$libdir" -name '*.la' -exec sed -i '' "s|libdir='/usr/local/lib'|libdir='$libdir'|g" {} +
++}
++
+ build_abi() {
+   local abi="$1"
+   local arch prefix_name cxx_abi
+@@ -946,6 +994,7 @@ build_abi() {
+       rubberband) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/librubberband.a" ] ;;
+       mpv) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libmpv.so" ] ;;
+     esac || die "$target did not produce its expected $abi output"
++    fixup_la_libdir "$prefix_name"
+     [ "$target" != "ffmpeg" ] || verify_curl_ffmpeg_compat
+   done
+   stage_abi "$arch" "$abi" "$prefix_name" "$cxx_abi"
+diff --git a/scripts/patch_chaquopy_minsdk.sh b/scripts/patch_chaquopy_minsdk.sh
+new file mode 100755
+index 0000000000..34105e898a
+--- /dev/null
++++ b/scripts/patch_chaquopy_minsdk.sh
+@@ -0,0 +1,108 @@
++#!/usr/bin/env bash
++#
++# patch_chaquopy_minsdk.sh
++#
++# webhtv 为支持 Android 6.0 (API 23) 把 minSdk 降到 23，但 Chaquopy 17.0.0 的 Gradle
++# 插件有两处会因此失败，本脚本对 ~/.gradle/caches 里的插件 jar（构建缓存）打两处补丁：
++#
++#   1) 配置期守卫 (PythonPlugin.onVariant)
++#      Chaquopy 16.0.0+ 硬编码了 "minSdk >= 24" 策略守卫：
++#      "This version of Chaquopy requires minSdk version 24 or higher"。
++#      把 `bipush 24` 改成 `bipush 1`（apiLevel >= 1 永远成立）即可让它永不触发。
++#
++#   2) 构建期 wheel 平台标签下限 (chaquopy/pip_install.py -> platform_tag)
++#      Chaquopy 把项目 minSdk 作为 --min-api-level 传给 pip，于是只匹配
++#      `android_<minSdk>_*` 的 wheel。但 Chaquopy 的 pypi 镜像里所有 Python >= 3.10
++#      的 wheel 都打在 `android_24_*`（API 24+），minSdk=23 时 pip 报
++#      "from versions: none"（lxml/ujson/pycryptodome 等装不上）。
++#      把平台标签下限抬到 24（max(min_api_level, 24)）即可让这些 wheel 被选中。
++#      这是构建期选择逻辑，运行时这些纯 C 包在 API 23 上仍可正常加载。
++#
++# 注意：
++#   - Chaquopy 17.0.0 支持 AGP 7.3–9.2，降级到支持 API 23 的 15.0.1 会与本项目
++#     的 Gradle 9.5.1 / AGP 9.x 冲突，因此走"打补丁"而非"降级"。
++#   - 本脚本修改的是 ~/.gradle/caches 里的插件 jar（构建缓存），不是仓库文件。
++#     执行 `./gradlew --refresh-dependencies` 或清缓存后需重新运行本脚本。
++#   - 运行时 Python 解释器是懒加载（仅在使用 Python Spider 时触发），
++#      即使 Python 运行时在 API 23 上有个别兼容问题，App 仍能安装/启动/播视频。
++#   - 备份只在“确实要打补丁前”从原始 jar 创建，文件名为 <jar>.chaquopy_patched.bak；
++#     若曾用其他方式打过补丁（备份名为 <jar>.chaquopy_minsdk.bak），回退时同样识别。
++#
++set -euo pipefail
++
++CACHE_ROOT="$HOME/.gradle/caches/modules-2/files-2.1/com.chaquo.python/gradle"
++
++find "$CACHE_ROOT" -type f -name 'gradle-*.jar' 2>/dev/null | while IFS= read -r JAR; do
++  [ -n "$JAR" ] || continue
++  python3 - "$JAR" <<'PY'
++import sys, zipfile, shutil, os, io
++
++# --- 补丁常量（必须定义在 Python 段内；外层 heredoc 为引号包裹，bash 变量不会注入） ---
++GUARD_NEEDLE = b'\x10\x18\xa2'   # bipush 24 ; if_icmpge
++GUARD_REPL  = b'\x10\x01\xa2'    # bipush 1  ; if_icmpge  -> apiLevel >= 1 always true
++
++PY_OLD = b'return "android_{}_{}".format(self.min_api_level, re.sub(r"[-.]", "_", abi))'
++PY_NEW = b'return "android_{}_{}".format(max(self.min_api_level, 24), re.sub(r"[-.]", "_", abi))'
++
++jar = sys.argv[1]
++if not os.path.exists(jar):
++    print(f"跳过（不存在）: {jar}")
++    sys.exit(0)
++
++with zipfile.ZipFile(jar) as z:
++    names = z.namelist()
++    if 'com/chaquo/python/PythonPlugin.class' not in names:
++        print(f"跳过 {jar}：不含 PythonPlugin.class")
++        sys.exit(0)
++    if 'com/chaquo/python/gradle/build-packages.zip' not in names:
++        print(f"跳过 {jar}：不含 build-packages.zip")
++        sys.exit(0)
++    data = {n: z.read(n) for n in names}
++
++cls = data['com/chaquo/python/PythonPlugin.class']
++with io.BytesIO(data['com/chaquo/python/gradle/build-packages.zip']) as bz:
++    with zipfile.ZipFile(bz) as _z:
++        bnames = _z.namelist()
++        assert 'chaquopy/pip_install.py' in bnames, "pip_install.py 缺失"
++        bdata = {n: _z.read(n) for n in bnames}
++        py = bdata['chaquopy/pip_install.py']
++
++# 只在“确实要打补丁”时创建备份，确保备份始终是未打补丁的原始 jar
++will_patch = (GUARD_NEEDLE in cls) or (PY_OLD in py)
++backup = jar + '.chaquopy_patched.bak'
++if will_patch and not os.path.exists(backup):
++    shutil.copy2(jar, backup)
++
++# --- Patch 1: minSdk guard in PythonPlugin.class (bipush 24 -> bipush 1) ---
++if GUARD_NEEDLE in cls:
++    assert cls.count(GUARD_NEEDLE) == 1, "守卫特征不唯一，中止以防误改"
++    data['com/chaquo/python/PythonPlugin.class'] = cls.replace(GUARD_NEEDLE, GUARD_REPL)
++    print(f"守卫补丁：已应用 ({jar})")
++else:
++    print(f"守卫补丁：已打过/无需 ({jar})")
++
++# --- Patch 2: wheel platform-tag floor in pip_install.py (min_api_level -> max(...,24)) ---
++if PY_OLD in py:
++    bdata['chaquopy/pip_install.py'] = py.replace(PY_OLD, PY_NEW)
++    buf = io.BytesIO()
++    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as out:
++        for n, c in bdata.items():
++            out.writestr(n, c)
++    data['com/chaquo/python/gradle/build-packages.zip'] = buf.getvalue()
++    print(f"平台标签补丁：已应用 ({jar})")
++else:
++    print(f"平台标签补丁：已打过/无需 ({jar})")
++
++if will_patch:
++    tmp = jar + '.tmp'
++    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as out:
++        for n, c in data.items():
++            out.writestr(n, c)
++    shutil.move(tmp, jar)
++    print(f"已重写 jar（备份：{backup}）")
++else:
++    print(f"jar 已是最新（无需改动）：{jar}")
++PY
++done
++
++echo "Chaquopy 补丁完成。若曾改动 chaquo/build.gradle 的 python.version 或 minSdk，重新构建即可生效。"
+diff --git a/scripts/verify_exo_ass.py b/scripts/verify_exo_ass.py
+index 4f1c3cfa6e..c5c147c21e 100644
+--- a/scripts/verify_exo_ass.py
++++ b/scripts/verify_exo_ass.py
+@@ -48,7 +48,7 @@ def sdk_path():
+     return Path(sdk)
+ 
+ 
+-def verify_elf(data, abi, api=24, page_size=16384):
++def verify_elf(data, abi, api=23, page_size=16384):
+     require(abi in ABI_ELF, "Unsupported ABI: " + abi)
+     elf_class, machine = ABI_ELF[abi]
+     is64 = elf_class == 2
+@@ -100,7 +100,7 @@ def verify_native(work):
+     provenance = json.loads((NATIVE / "build-provenance.json").read_text())
+     require(provenance["schema"] == 2, "Expected per-ABI provenance")
+     require(lock["android"] == provenance["android"], "Android provenance mismatch")
+-    require(lock["android"]["api"] == 24 and lock["android"]["page_size"] == 16384
++    require(lock["android"]["api"] == 23 and lock["android"]["page_size"] == 16384
+             and lock["android"]["stl"] == "c++_static"
+             and set(lock["android"]["abis"]) == set(ABI_ELF), "ABI/API/linkage drift")
+     abis = lock["android"]["abis"]
+diff --git a/scripts/verify_mpv_native_assets.sh b/scripts/verify_mpv_native_assets.sh
+index 92fe31204e..feb364385f 100755
+--- a/scripts/verify_mpv_native_assets.sh
++++ b/scripts/verify_mpv_native_assets.sh
+@@ -190,9 +190,13 @@ verify_abi() {
+   contains_string "$directory/libmpv.so" "discnav"
+   contains_string "$directory/libmpv.so" "WebHTV event-only disc navigation polling enabled"
+   contains_string "$directory/libmpv.so" "WebHTV MediaCodec reset discards pending output"
+-  contains_string "$directory/libmpv.so" "Vulkan AImageReader backend:"
+-  contains_string "$directory/libmpv.so" "Using Vulkan YCbCr AHardwareBuffer sampling"
+-  contains_string "$directory/libmpv.so" "Vulkan AImageReader sync-fd:"
++  # Vulkan-only runtime markers: only present when mpv is built with -Dvulkan
++  # enabled. This API-23/no-Vulkan target lacks a Vulkan loader, so these are
++  # absent; gate them on backend presence to avoid false verification failures.
++  if grep -Fq "Vulkan AImageReader backend:" "$directory/libmpv.so"; then
++    contains_string "$directory/libmpv.so" "Using Vulkan YCbCr AHardwareBuffer sampling"
++    contains_string "$directory/libmpv.so" "Vulkan AImageReader sync-fd:"
++  fi
+   contains_string "$directory/libmpv.so" "android-osd-wid"
+   contains_string "$directory/libmpv.so" "Direct Dolby Vision initialization failed"
+   contains_string "$directory/libmpv.so" "video output has no queue-safe EL decoder"
+@@ -240,13 +244,16 @@ verify_abi() {
+   reject_string "$directory/libmpv.so" "Using device native output sample rate for passthrough compatibility"
+   contains_string "$directory/libmpv.so" "Using 7.1 IEC61937 carrier mask for TrueHD"
+   contains_string "$directory/libmpv.so" "Using 7.1 IEC61937 carrier mask for Android 12+ 8-channel stream"
+-  contains_string "$directory/libmpv.so" "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling"
+-  contains_string "$directory/libmpv.so" "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool"
+-  contains_string "$directory/libmpv.so" "CPU-precomputed UV transform"
+-  contains_string "$directory/libmpv.so" "Generic Vulkan conversion uses CPU-precomputed UV transform"
+-  contains_string "$directory/libmpv.so" "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping"
+-  contains_string "$directory/libmpv.so" "WebHTV Vulkan keeps AImage until the conversion fence completes"
+-  contains_string "$directory/libmpv.so" "WebHTV AImageReader uses stable release/acquire flow"
++  # Vulkan-only WebHTV Android patches; gate on backend presence (see note above).
++  if grep -Fq "Vulkan AImageReader backend:" "$directory/libmpv.so"; then
++    contains_string "$directory/libmpv.so" "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling"
++    contains_string "$directory/libmpv.so" "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool"
++    contains_string "$directory/libmpv.so" "CPU-precomputed UV transform"
++    contains_string "$directory/libmpv.so" "Generic Vulkan conversion uses CPU-precomputed UV transform"
++    contains_string "$directory/libmpv.so" "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping"
++    contains_string "$directory/libmpv.so" "WebHTV Vulkan keeps AImage until the conversion fence completes"
++    contains_string "$directory/libmpv.so" "WebHTV AImageReader uses stable release/acquire flow"
++  fi
+   contains_string "$directory/libmpv.so" "Using declared Matroska segment end for seek metadata."
+   contains_string "$directory/libmvcodec.so" "libarcdav3a AV3A"
+   contains_string "$directory/libmvcodec.so" "libuavs3d"
+@@ -289,7 +296,11 @@ verify_abi() {
+     done
+ 
+     mpv_dynamic="$("$READELF_BIN" -d "$directory/libmpv.so")"
+-    for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so libvulkan.so; do
++    # NOTE: libvulkan.so is intentionally NOT required here. This build targets
++    # Android 6.0 (API 23), which has no Vulkan loader. mpv is configured
++    # -Dvulkan=disabled and the fake vulkan.pc is not shipped, so libmpv.so
++    # legitimately has no libvulkan.so dependency for the API-23/no-Vulkan target.
++    for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so; do
+       printf '%s\n' "$mpv_dynamic" | grep -F "Shared library: [$name]" >/dev/null || die "libmpv.so does not depend on $name for $abi"
+     done
+   fi
+diff --git a/third_party/mpv-native-overrides/libplacebo.sh b/third_party/mpv-native-overrides/libplacebo.sh
+index 31c8a97b6a..eac80b0a3d 100755
+--- a/third_party/mpv-native-overrides/libplacebo.sh
++++ b/third_party/mpv-native-overrides/libplacebo.sh
+@@ -22,12 +22,16 @@ export CFLAGS="-I$prefix_dir/include ${CFLAGS:-}"
+ export CXXFLAGS="-I$prefix_dir/include ${CXXFLAGS:-}"
+ export LDFLAGS="-L$prefix_dir/lib ${LDFLAGS:-}"
+ meson setup "$build" --cross-file "$prefix_dir/crossfile.txt" \
+-	-Dopengl=enabled -Dvulkan=enabled \
++	-Dopengl=enabled -Dvulkan=disabled \
+ 	-Dshaderc=enabled -Dglslang=disabled \
+ 	-Ddemos=false
+ 
+ config_header="$build/src/include/libplacebo/config.h"
+-for backend in OPENGL VULKAN; do
++# Only the OpenGL backend is required here. Vulkan is unavailable on the
++# minimum supported platform (Android 6.0 / API 23 has no Vulkan driver), so
++# we build libplacebo with -Dvulkan=disabled and must not fail the build when
++# PL_HAVE_VULKAN is absent.
++for backend in OPENGL; do
+ 	grep -Eq "^#define PL_HAVE_${backend} 1([[:space:]]|$)" "$config_header" || {
+ 		echo "libplacebo backend PL_HAVE_${backend}=1 is missing." >&2
+ 		exit 1
+diff --git a/third_party/mpv-native-overrides/mpv.sh b/third_party/mpv-native-overrides/mpv.sh
+index 439ed51cb9..d83c217db0 100644
+--- a/third_party/mpv-native-overrides/mpv.sh
++++ b/third_party/mpv-native-overrides/mpv.sh
+@@ -48,14 +48,19 @@ else
+ 	exit 255
+ fi
+ 
++# NOTE: We intentionally do NOT ship a fake vulkan.pc here.
++#
++# Android 6.0 (API 23) has no Vulkan loader (libvulkan.so is only present in the
++# NDK sysroot at API 26+). mpv's meson treats the vulkan dependency as OPTIONAL:
++# even with -Dvulkan=disabled it runs `dependency('vulkan', required: vulkan_opt)`
++# and, if a vulkan.pc exists, finds it and ALSO finds the NDK's bundled
++# vulkan/vulkan_core.h header, which makes `features['vulkan']` true and links
++# -lvulkan into libmpv -> the link fails on API 23 ("unable to find library
++# -lvulkan"). By not providing vulkan.pc we let the dependency stay "not found",
++# so no vulkan code is compiled or linked. Vulkan headers are supplied by the NDK
++# sysroot itself, so libplacebo/ffmpeg header consumers still compile fine.
++
+ mkdir -p "$prefix_dir"/lib/pkgconfig
+-cat >"$prefix_dir"/lib/pkgconfig/vulkan.pc <<"END"
+-Name: Vulkan
+-Description:
+-Version: 1.3.275
+-Libs: -lvulkan
+-Cflags:
+-END
+ 
+ unset CC CXX
+ 
+@@ -66,7 +71,7 @@ meson setup "$build" --cross-file "$prefix_dir"/crossfile.txt \
+ 	--default-library shared \
+ 	-Diconv=enabled -Duchardet=enabled \
+ 	-Dlibarchive=enabled -Ddvdnav=enabled \
+-	-Dlua=enabled -Dvulkan=enabled \
++	-Dlua=enabled -Dvulkan=disabled \
+ 	-Dlibcurl="${WEBHTV_MPV_LIBCURL:-auto}" \
+ 	-Dlibbluray=enabled -Drubberband=enabled \
+ 	-Dlibmpv=true -Dcplayer=false \

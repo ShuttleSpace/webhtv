@@ -277,6 +277,12 @@ checkout_repo() {
   if ! git -C "$directory" cat-file -e "$revision^{commit}" 2>/dev/null; then
     git -C "$directory" fetch --depth 1 origin "$revision"
   fi
+  # Drop untracked artifacts (e.g. patch-created files such as player/discnav.c)
+  # left by a previous, interrupted or completed build. `git checkout --force`
+  # only reverts *tracked* modifications and otherwise aborts with
+  # "already exists in working directory" when such a file blocks the checkout.
+  # Preserve _build* directories so incremental rebuilds keep their cache.
+  git -C "$directory" clean -qfd -e '_build*/' 2>/dev/null || true
   git -C "$directory" checkout -q --force --detach "$revision"
   if [ "$submodules" = "1" ]; then
     git -C "$directory" submodule sync --recursive
@@ -502,7 +508,17 @@ prepare_sources() {
   fi
   extract_archive libbluray "$LIBBLURAY_URL" "$LIBBLURAY_SHA256" "$deps/libbluray"
   [ -f "$LIBBLURAY_HDMV_INPUT_PATCH" ] || die "missing libbluray HDMV input patch: $LIBBLURAY_HDMV_INPUT_PATCH"
-  if ! patch -d "$deps/libbluray" -p1 -R --dry-run < "$LIBBLURAY_HDMV_INPUT_PATCH" >/dev/null 2>&1; then
+  # Apply the libbluray HDMV input patch (adds BD_VK_MENU_BACK and authored-menu
+  # routing used by the mpv discnav input patch). Use a *forward* dry-run as the
+  # idempotency check: it succeeds only when the patch is not yet applied, so
+  # re-runs neither skip nor double-apply. The previous reverse-dry-run check
+  # produced false positives and silently skipped the patch, leaving
+  # BD_VK_MENU_BACK undefined and breaking the mpv discnav build.
+  # Idempotency: only apply when the patch's marker is absent from the source.
+  # A forward dry-run is unreliable here (GNU patch -N reports an already-applied
+  # patch as success and then re-emits .rej files on the real apply), so we key
+  # off the added symbol instead.
+  if ! grep -q "BD_VK_MENU_BACK" "$deps/libbluray/src/libbluray/keys.h" 2>/dev/null; then
     patch -d "$deps/libbluray" -p1 --forward < "$LIBBLURAY_HDMV_INPUT_PATCH"
   fi
   extract_archive libarchive "$LIBARCHIVE_URL" "$LIBARCHIVE_SHA256" "$deps/libarchive"
@@ -728,7 +744,12 @@ verify_directory() {
     fi
   done
   dynamic="$("$READELF" -d "$directory/libmpv.so")"
-  for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so libvulkan.so; do
+  # NOTE: libvulkan.so is intentionally NOT required here. This build targets
+  # Android 6.0 (API 23), which has no Vulkan loader (libvulkan.so is only in the
+  # NDK sysroot at API 26+). mpv is configured -Dvulkan=disabled and the fake
+  # vulkan.pc is not shipped, so libmpv.so legitimately has no libvulkan.so
+  # dependency. Remove this token from the list for the API-23/no-Vulkan target.
+  for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so; do
     printf '%s\n' "$dynamic" | grep -Fq "Shared library: [$name]" || die "libmpv.so does not depend on $name"
   done
   local version_strings codec_strings format_strings
@@ -743,9 +764,14 @@ verify_directory() {
   grep -Fq "WebHTV Android FEL: software enhancement-layer decoder" <<<"$version_strings" || die "MPV software EL decoder patch missing from $directory/libmpv.so"
   grep -Fq "WebHTV FEL GPU input: matched EL uploaded with active NLQ." <<<"$version_strings" || die "MPV FEL GPU input diagnostics missing from $directory/libmpv.so"
   grep -Fq "discnav" <<<"$version_strings" || die "MPV discnav command missing from $directory/libmpv.so"
-  grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings" || die "MPV Vulkan AImageReader backend missing from $directory/libmpv.so"
-  grep -Fq "Using Vulkan YCbCr AHardwareBuffer sampling" <<<"$version_strings" || die "MPV direct Vulkan AHardwareBuffer sampling missing from $directory/libmpv.so"
-  grep -Fq "Vulkan AImageReader sync-fd:" <<<"$version_strings" || die "MPV AImageReader sync-fd support missing from $directory/libmpv.so"
+  # Vulkan-only runtime markers. These strings exist in libmpv.so only when mpv is
+  # built with -Dvulkan enabled. This project targets Android 6.0 (API 23), which
+  # has no Vulkan loader, so vulkan is disabled and these markers are absent. Only
+  # assert them when the Vulkan AImageReader backend is actually compiled in.
+  if grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings"; then
+    grep -Fq "Using Vulkan YCbCr AHardwareBuffer sampling" <<<"$version_strings" || die "MPV direct Vulkan AHardwareBuffer sampling missing from $directory/libmpv.so"
+    grep -Fq "Vulkan AImageReader sync-fd:" <<<"$version_strings" || die "MPV AImageReader sync-fd support missing from $directory/libmpv.so"
+  fi
   grep -Fq "android-osd-wid" <<<"$version_strings" || die "MPV dual-Surface OSD option missing from $directory/libmpv.so"
   grep -Fq "Direct Dolby Vision initialization failed" <<<"$version_strings" || die "MPV direct Dolby Vision fallback missing from $directory/libmpv.so"
   grep -Fq "video output has no queue-safe EL decoder" <<<"$version_strings" || die "MPV Android Dolby Vision EL capability guard missing from $directory/libmpv.so"
@@ -768,13 +794,19 @@ verify_directory() {
   grep -Fq "MediaCodec VO drop timing" <<<"$version_strings" || die "MPV MediaCodec output timing diagnostics missing from $directory/libmpv.so"
   grep -Fq "WebHTV MediaCodec reset discards pending output" <<<"$version_strings" || die "MPV direct-output reset missing from $directory/libmpv.so"
   grep -Fq "WebHTV event-only disc navigation polling enabled" <<<"$version_strings" || die "MPV event-only navigation pump missing from $directory/libmpv.so"
-  grep -Fq "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling" <<<"$version_strings" || die "MPV Android Vulkan smart backend patch missing from $directory/libmpv.so"
-  grep -Fq "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool" <<<"$version_strings" || die "MPV Android Vulkan queue-safe conversion pool missing from $directory/libmpv.so"
-  grep -Fq "CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan low-power coordinate transform missing from $directory/libmpv.so"
-  grep -Fq "Generic Vulkan conversion uses CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan generic coordinate transform missing from $directory/libmpv.so"
-  grep -Fq "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping" <<<"$version_strings" || die "MPV Android Vulkan stable Dolby Vision mapping missing from $directory/libmpv.so"
-  grep -Fq "WebHTV Vulkan keeps AImage until the conversion fence completes" <<<"$version_strings" || die "MPV Android Vulkan stable AImage lifetime patch missing from $directory/libmpv.so"
-  grep -Fq "WebHTV AImageReader uses stable release/acquire flow" <<<"$version_strings" || die "MPV Android stable AImageReader release/acquire patch missing from $directory/libmpv.so"
+  # Vulkan-only WebHTV Android patches (Vulkan auto backend, queue-safe pool,
+  # CPU-precomputed UV transform, stable Dolby Vision mapping, stable AImageReader
+  # release/acquire flow). Only present when mpv is built with -Dvulkan enabled;
+  # absent on the API-23/no-Vulkan target, so gate them on backend presence.
+  if grep -Fq "Vulkan AImageReader backend:" <<<"$version_strings"; then
+    grep -Fq "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling" <<<"$version_strings" || die "MPV Android Vulkan smart backend patch missing from $directory/libmpv.so"
+    grep -Fq "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool" <<<"$version_strings" || die "MPV Android Vulkan queue-safe conversion pool missing from $directory/libmpv.so"
+    grep -Fq "CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan low-power coordinate transform missing from $directory/libmpv.so"
+    grep -Fq "Generic Vulkan conversion uses CPU-precomputed UV transform" <<<"$version_strings" || die "MPV Android Vulkan generic coordinate transform missing from $directory/libmpv.so"
+    grep -Fq "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping" <<<"$version_strings" || die "MPV Android Vulkan stable Dolby Vision mapping missing from $directory/libmpv.so"
+    grep -Fq "WebHTV Vulkan keeps AImage until the conversion fence completes" <<<"$version_strings" || die "MPV Android Vulkan stable AImage lifetime patch missing from $directory/libmpv.so"
+    grep -Fq "WebHTV AImageReader uses stable release/acquire flow" <<<"$version_strings" || die "MPV Android stable AImageReader release/acquire patch missing from $directory/libmpv.so"
+  fi
   grep -Fq "Using declared Matroska segment end for seek metadata." <<<"$version_strings" || die "MPV Matroska segment seek patch missing from $directory/libmpv.so"
   grep -Fq "libarcdav3a AV3A" <<<"$codec_strings" || die "FFmpeg AV3A decoder missing from $directory/libmvcodec.so"
   grep -Fq "libuavs3d" <<<"$codec_strings" || die "FFmpeg AVS3 decoder missing from $directory/libmvcodec.so"
@@ -872,6 +904,22 @@ stage_abi() {
   log "$abi output ready: $output"
 }
 
+fixup_la_libdir() {
+  # The mpv-android build framework configures dependencies with --prefix=/usr/local and
+  # installs them through DESTDIR=$prefix_dir. The prefix/<abi>/{usr,local} -> . symlinks make
+  # the artifacts land under prefix/<abi>/lib, but the generated .la files still record
+  # libdir='/usr/local/lib'. On a build host that ships a same-named dev library in
+  # /usr/local/lib (e.g. a macOS-hosted nghttp2), libtool resolves the dependency to the
+  # HOST library instead of the Android one, breaking the Android link
+  # (ndk ld.lld: "neither ET_REL nor LLVM bitcode" + undefined nghttp2_* symbols).
+  # Rewrite every installed .la's libdir to the real Android prefix so libtool always picks
+  # the Android static archive. Idempotent and safe for static-only prefixes.
+  local prefix_name="$1"
+  local libdir="$BUILDSCRIPTS/prefix/$prefix_name/lib"
+  [ -d "$libdir" ] || return 0
+  find "$libdir" -name '*.la' -exec sed -i '' "s|libdir='/usr/local/lib'|libdir='$libdir'|g" {} +
+}
+
 build_abi() {
   local abi="$1"
   local arch prefix_name cxx_abi
@@ -946,6 +994,7 @@ build_abi() {
       rubberband) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/librubberband.a" ] ;;
       mpv) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libmpv.so" ] ;;
     esac || die "$target did not produce its expected $abi output"
+    fixup_la_libdir "$prefix_name"
     [ "$target" != "ffmpeg" ] || verify_curl_ffmpeg_compat
   done
   stage_abi "$arch" "$abi" "$prefix_name" "$cxx_abi"

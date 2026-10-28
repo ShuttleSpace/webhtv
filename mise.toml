@@ -1,0 +1,7 @@
+[env]
+ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+[settings]
+env_shell_expand = true
+
+[tools]
+python = "3.10.22"

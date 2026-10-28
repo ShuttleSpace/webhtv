@@ -52,6 +52,11 @@
         <package android:name="com.android.settings" />
     </queries>
 
+    <!-- 保持 minSdk 23（Android 6.0 可安装）的同时，允许以下声明了 minSdk 24 的本地 aar 合并进 APK。
+         这些库（com.tvbus.engine / com.ghost.thunder / com.fongmi.hook）均不在 API 23 的通用视频播放
+         启动/主路径上，只在各自特定协议源被播放时才懒加载且有异常兜底，因此强制合并不会造成启动崩溃。 -->
+    <uses-sdk tools:overrideLibrary="com.tvbus.engine,com.ghost.thunder,com.fongmi.hook,androidx.webkit" />
+
     <application
         android:name=".App"
         android:allowBackup="false"

@@ -18,7 +18,22 @@ public class PyLoader {
 
     public PyLoader() {
         spiders = new ConcurrentHashMap<>();
-        loader = new Loader();
+        Loader l = null;
+        try {
+            l = new Loader();
+        } catch (Throwable t) {
+            // ChaQuoPy's native runtime (libchaquopy_java / libpython) requires
+            // API 24+. On Android 6.0 (API 23) loading it throws
+            // UnsatisfiedLinkError. Degrade gracefully so BaseLoader
+            // initialization never crashes the app (video playback does not
+            // depend on Python).
+            t.printStackTrace();
+        }
+        loader = l;
+    }
+
+    public boolean isAvailable() {
+        return loader != null;
     }
 
     public void clear() {
@@ -32,6 +47,7 @@ public class PyLoader {
     }
 
     public Spider getSpider(String key, String api, String ext) {
+        if (loader == null) return new SpiderNull();
         return spiders.computeIfAbsent(key, k -> {
             try {
                 Spider spider = loader.spider(api);
@@ -54,7 +70,7 @@ public class PyLoader {
     }
 
     public Object[] proxy(Map<String, String> params) throws Exception {
-        if (recent == null) return null;
+        if (recent == null || loader == null) return null;
         Spider spider = spiders.get(recent);
         return spider != null ? spider.proxy(params) : null;
     }

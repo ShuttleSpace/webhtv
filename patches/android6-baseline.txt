@@ -1,0 +1,9 @@
+# webhtv Android 6.0 (API 23) 适配 — git 基线锁定
+#
+# 此 commit (4e30ffaf21) 是 Android 6 适配的“原始 API 24+”基点，也是
+# patches/android6-api23.patch 的应用基点与 android6-revert 的还原目标。
+# 在“未提交补丁”的工作流中，android6-patch 会校验当前 HEAD 是否等于此值，
+# 避免在不匹配的提交上打补丁，导致冲突或不可复现。
+# 若确认当前提交应作为新的适配基点（上游已前进且补丁已重新生成），
+# 运行：just android6-pin
+4e30ffaf219b1db15fe5662aeff6f9820e2b32bf

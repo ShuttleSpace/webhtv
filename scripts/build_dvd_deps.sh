@@ -40,8 +40,8 @@ git -C "$BLURAY_SRC" submodule update --init --recursive contrib/libudfread
 build_abi() {
   local abi="$1" target host
   case "$abi" in
-    arm64-v8a) target="aarch64-linux-android24"; host="aarch64-linux-android" ;;
-    armeabi-v7a) target="armv7a-linux-androideabi24"; host="arm-linux-androideabi" ;;
+    arm64-v8a) target="aarch64-linux-android23"; host="aarch64-linux-android" ;;
+    armeabi-v7a) target="armv7a-linux-androideabi23"; host="arm-linux-androideabi" ;;
     *) echo "Unsupported ABI: $abi" >&2; exit 2 ;;
   esac
   local prefix="$BUILD/$abi/prefix"

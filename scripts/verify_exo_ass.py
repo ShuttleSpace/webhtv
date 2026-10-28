@@ -48,7 +48,7 @@ def sdk_path():
     return Path(sdk)
 
 
-def verify_elf(data, abi, api=24, page_size=16384):
+def verify_elf(data, abi, api=23, page_size=16384):
     require(abi in ABI_ELF, "Unsupported ABI: " + abi)
     elf_class, machine = ABI_ELF[abi]
     is64 = elf_class == 2
@@ -100,7 +100,7 @@ def verify_native(work):
     provenance = json.loads((NATIVE / "build-provenance.json").read_text())
     require(provenance["schema"] == 2, "Expected per-ABI provenance")
     require(lock["android"] == provenance["android"], "Android provenance mismatch")
-    require(lock["android"]["api"] == 24 and lock["android"]["page_size"] == 16384
+    require(lock["android"]["api"] == 23 and lock["android"]["page_size"] == 16384
             and lock["android"]["stl"] == "c++_static"
             and set(lock["android"]["abis"]) == set(ABI_ELF), "ABI/API/linkage drift")
     abis = lock["android"]["abis"]

@@ -190,9 +190,13 @@ verify_abi() {
   contains_string "$directory/libmpv.so" "discnav"
   contains_string "$directory/libmpv.so" "WebHTV event-only disc navigation polling enabled"
   contains_string "$directory/libmpv.so" "WebHTV MediaCodec reset discards pending output"
-  contains_string "$directory/libmpv.so" "Vulkan AImageReader backend:"
-  contains_string "$directory/libmpv.so" "Using Vulkan YCbCr AHardwareBuffer sampling"
-  contains_string "$directory/libmpv.so" "Vulkan AImageReader sync-fd:"
+  # Vulkan-only runtime markers: only present when mpv is built with -Dvulkan
+  # enabled. This API-23/no-Vulkan target lacks a Vulkan loader, so these are
+  # absent; gate them on backend presence to avoid false verification failures.
+  if grep -Fq "Vulkan AImageReader backend:" "$directory/libmpv.so"; then
+    contains_string "$directory/libmpv.so" "Using Vulkan YCbCr AHardwareBuffer sampling"
+    contains_string "$directory/libmpv.so" "Vulkan AImageReader sync-fd:"
+  fi
   contains_string "$directory/libmpv.so" "android-osd-wid"
   contains_string "$directory/libmpv.so" "Direct Dolby Vision initialization failed"
   contains_string "$directory/libmpv.so" "video output has no queue-safe EL decoder"
@@ -240,13 +244,16 @@ verify_abi() {
   reject_string "$directory/libmpv.so" "Using device native output sample rate for passthrough compatibility"
   contains_string "$directory/libmpv.so" "Using 7.1 IEC61937 carrier mask for TrueHD"
   contains_string "$directory/libmpv.so" "Using 7.1 IEC61937 carrier mask for Android 12+ 8-channel stream"
-  contains_string "$directory/libmpv.so" "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling"
-  contains_string "$directory/libmpv.so" "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool"
-  contains_string "$directory/libmpv.so" "CPU-precomputed UV transform"
-  contains_string "$directory/libmpv.so" "Generic Vulkan conversion uses CPU-precomputed UV transform"
-  contains_string "$directory/libmpv.so" "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping"
-  contains_string "$directory/libmpv.so" "WebHTV Vulkan keeps AImage until the conversion fence completes"
-  contains_string "$directory/libmpv.so" "WebHTV AImageReader uses stable release/acquire flow"
+  # Vulkan-only WebHTV Android patches; gate on backend presence (see note above).
+  if grep -Fq "Vulkan AImageReader backend:" "$directory/libmpv.so"; then
+    contains_string "$directory/libmpv.so" "WebHTV Vulkan auto backend prefers direct AHardwareBuffer sampling"
+    contains_string "$directory/libmpv.so" "WebHTV Vulkan auto uses a queue-safe four-output bounded-fence pool"
+    contains_string "$directory/libmpv.so" "CPU-precomputed UV transform"
+    contains_string "$directory/libmpv.so" "Generic Vulkan conversion uses CPU-precomputed UV transform"
+    contains_string "$directory/libmpv.so" "Stable Vulkan conversion preserves Dolby Vision raw YUV component mapping"
+    contains_string "$directory/libmpv.so" "WebHTV Vulkan keeps AImage until the conversion fence completes"
+    contains_string "$directory/libmpv.so" "WebHTV AImageReader uses stable release/acquire flow"
+  fi
   contains_string "$directory/libmpv.so" "Using declared Matroska segment end for seek metadata."
   contains_string "$directory/libmvcodec.so" "libarcdav3a AV3A"
   contains_string "$directory/libmvcodec.so" "libuavs3d"
@@ -289,7 +296,11 @@ verify_abi() {
     done
 
     mpv_dynamic="$("$READELF_BIN" -d "$directory/libmpv.so")"
-    for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so libvulkan.so; do
+    # NOTE: libvulkan.so is intentionally NOT required here. This build targets
+    # Android 6.0 (API 23), which has no Vulkan loader. mpv is configured
+    # -Dvulkan=disabled and the fake vulkan.pc is not shipped, so libmpv.so
+    # legitimately has no libvulkan.so dependency for the API-23/no-Vulkan target.
+    for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so; do
       printf '%s\n' "$mpv_dynamic" | grep -F "Shared library: [$name]" >/dev/null || die "libmpv.so does not depend on $name for $abi"
     done
   fi

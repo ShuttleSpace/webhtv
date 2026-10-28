@@ -22,12 +22,16 @@ export CFLAGS="-I$prefix_dir/include ${CFLAGS:-}"
 export CXXFLAGS="-I$prefix_dir/include ${CXXFLAGS:-}"
 export LDFLAGS="-L$prefix_dir/lib ${LDFLAGS:-}"
 meson setup "$build" --cross-file "$prefix_dir/crossfile.txt" \
-	-Dopengl=enabled -Dvulkan=enabled \
+	-Dopengl=enabled -Dvulkan=disabled \
 	-Dshaderc=enabled -Dglslang=disabled \
 	-Ddemos=false
 
 config_header="$build/src/include/libplacebo/config.h"
-for backend in OPENGL VULKAN; do
+# Only the OpenGL backend is required here. Vulkan is unavailable on the
+# minimum supported platform (Android 6.0 / API 23 has no Vulkan driver), so
+# we build libplacebo with -Dvulkan=disabled and must not fail the build when
+# PL_HAVE_VULKAN is absent.
+for backend in OPENGL; do
 	grep -Eq "^#define PL_HAVE_${backend} 1([[:space:]]|$)" "$config_header" || {
 		echo "libplacebo backend PL_HAVE_${backend}=1 is missing." >&2
 		exit 1

@@ -48,14 +48,19 @@ else
 	exit 255
 fi
 
+# NOTE: We intentionally do NOT ship a fake vulkan.pc here.
+#
+# Android 6.0 (API 23) has no Vulkan loader (libvulkan.so is only present in the
+# NDK sysroot at API 26+). mpv's meson treats the vulkan dependency as OPTIONAL:
+# even with -Dvulkan=disabled it runs `dependency('vulkan', required: vulkan_opt)`
+# and, if a vulkan.pc exists, finds it and ALSO finds the NDK's bundled
+# vulkan/vulkan_core.h header, which makes `features['vulkan']` true and links
+# -lvulkan into libmpv -> the link fails on API 23 ("unable to find library
+# -lvulkan"). By not providing vulkan.pc we let the dependency stay "not found",
+# so no vulkan code is compiled or linked. Vulkan headers are supplied by the NDK
+# sysroot itself, so libplacebo/ffmpeg header consumers still compile fine.
+
 mkdir -p "$prefix_dir"/lib/pkgconfig
-cat >"$prefix_dir"/lib/pkgconfig/vulkan.pc <<"END"
-Name: Vulkan
-Description:
-Version: 1.3.275
-Libs: -lvulkan
-Cflags:
-END
 
 unset CC CXX
 
@@ -66,7 +71,7 @@ meson setup "$build" --cross-file "$prefix_dir"/crossfile.txt \
 	--default-library shared \
 	-Diconv=enabled -Duchardet=enabled \
 	-Dlibarchive=enabled -Ddvdnav=enabled \
-	-Dlua=enabled -Dvulkan=enabled \
+	-Dlua=enabled -Dvulkan=disabled \
 	-Dlibcurl="${WEBHTV_MPV_LIBCURL:-auto}" \
 	-Dlibbluray=enabled -Drubberband=enabled \
 	-Dlibmpv=true -Dcplayer=false \

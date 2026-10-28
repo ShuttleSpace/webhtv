@@ -18,7 +18,19 @@ public class JsLoader {
 
     public JsLoader() {
         spiders = new ConcurrentHashMap<>();
-        loader = new Loader();
+        Loader l = null;
+        try {
+            l = new Loader();
+        } catch (Throwable t) {
+            // QuickJS native runtime may fail to load on some API levels.
+            // Degrade gracefully so BaseLoader initialization never crashes.
+            t.printStackTrace();
+        }
+        loader = l;
+    }
+
+    public boolean isAvailable() {
+        return loader != null;
     }
 
     public void clear() {
@@ -33,6 +45,7 @@ public class JsLoader {
     }
 
     public Spider getSpider(String key, String api, String ext, String jar) {
+        if (loader == null) return new SpiderNull();
         return spiders.computeIfAbsent(key, k -> {
             try {
                 Spider spider = loader.spider(api, BaseLoader.get().dex(jar));
@@ -49,7 +62,7 @@ public class JsLoader {
     }
 
     public Object[] proxy(Map<String, String> params) throws Exception {
-        if (recent == null) return null;
+        if (recent == null || loader == null) return null;
         Spider spider = spiders.get(recent);
         return spider != null ? spider.proxy(params) : null;
     }
