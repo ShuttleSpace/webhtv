@@ -1,3 +1,81 @@
+diff --git a/app/src/leanback/java/com/fongmi/android/tv/receiver/BootReceiver.java b/app/src/leanback/java/com/fongmi/android/tv/receiver/BootReceiver.java
+index 0b850ff575..a9d78af5af 100644
+--- a/app/src/leanback/java/com/fongmi/android/tv/receiver/BootReceiver.java
++++ b/app/src/leanback/java/com/fongmi/android/tv/receiver/BootReceiver.java
+@@ -5,6 +5,9 @@ import android.content.Context;
+ import android.content.Intent;
+ import android.net.ConnectivityManager;
+ import android.net.Network;
++import android.net.NetworkCapabilities;
++import android.net.NetworkRequest;
++import android.os.Build;
+ 
+ import androidx.annotation.NonNull;
+ 
+@@ -24,7 +27,24 @@ public class BootReceiver extends BroadcastReceiver {
+     }
+ 
+     private void registerCallback() {
+-        ((ConnectivityManager) App.get().getSystemService(Context.CONNECTIVITY_SERVICE)).registerDefaultNetworkCallback(new Callback());
++        ConnectivityManager manager = (ConnectivityManager) App.get().getSystemService(Context.CONNECTIVITY_SERVICE);
++        if (manager == null) return;
++        try {
++            // ConnectivityManager.registerDefaultNetworkCallback 是 API 24 (Android 7.0)
++            // 才有的方法，Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
++            // （开机广播路径，必崩）。API 21+ 就有 registerNetworkCallback(NetworkRequest)，
++            // 这里显式构造一个"有网络即满足"的请求，语义等价。
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++                manager.registerDefaultNetworkCallback(new Callback());
++            } else {
++                NetworkRequest request = new NetworkRequest.Builder()
++                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
++                        .build();
++                manager.registerNetworkCallback(request, new Callback());
++            }
++        } catch (Throwable e) {
++            LiveConfig.get().init().load();
++        }
+     }
+ 
+     static class Callback extends ConnectivityManager.NetworkCallback {
+diff --git a/app/src/leanback/java/com/fongmi/android/tv/ui/custom/CustomSelector.java b/app/src/leanback/java/com/fongmi/android/tv/ui/custom/CustomSelector.java
+index a81935d948..890e6c4050 100644
+--- a/app/src/leanback/java/com/fongmi/android/tv/ui/custom/CustomSelector.java
++++ b/app/src/leanback/java/com/fongmi/android/tv/ui/custom/CustomSelector.java
+@@ -1,5 +1,6 @@
+ package com.fongmi.android.tv.ui.custom;
+ 
++import java.util.Map;
+ import androidx.annotation.NonNull;
+ import androidx.collection.ArrayMap;
+ import androidx.leanback.widget.ListRow;
+@@ -14,7 +15,10 @@ public class CustomSelector extends PresenterSelector {
+     private final Set<Presenter> presenters = new LinkedHashSet<>();
+     private final ArrayMap<Key, Presenter> cacheMap = new ArrayMap<>();
+     private final ArrayMap<Class<?>, Presenter> singleMap = new ArrayMap<>();
+-    private final ArrayMap<Class<?>, ArrayMap<Class<? extends Presenter>, Presenter>> nestedMap = new ArrayMap<>();
++    // 静态类型用 Map（Android 6.0 上 Map.computeIfAbsent 这类 Java 8 default 方法
++    // 不可用，Map 接口形式才能被 core library desugaring 改写）；值仍用 ArrayMap，
++    // 因为下面的 valueAt/keyAt 是 ArrayMap 专有方法。
++    private final Map<Class<?>, ArrayMap<Class<? extends Presenter>, Presenter>> nestedMap = new ArrayMap<>();
+ 
+     public void addPresenter(Class<?> cls, Presenter presenter) {
+         singleMap.put(cls, presenter);
+@@ -23,7 +27,13 @@ public class CustomSelector extends PresenterSelector {
+     }
+ 
+     public void addPresenter(Class<?> cls, Presenter presenter, Class<? extends Presenter> childType) {
+-        nestedMap.computeIfAbsent(cls, k -> new ArrayMap<>()).put(childType, presenter);
++        // 不用 Map.computeIfAbsent（Java 8 default 方法，API 23 不存在），改为 get/put。
++        ArrayMap<Class<? extends Presenter>, Presenter> map = nestedMap.get(cls);
++        if (map == null) {
++            map = new ArrayMap<>();
++            nestedMap.put(cls, map);
++        }
++        map.put(childType, presenter);
+         presenters.add(presenter);
+         cacheMap.clear();
+     }
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
 index 3cc9308a42..32b25b9202 100644
 --- a/app/src/main/AndroidManifest.xml
@@ -15,10 +93,17 @@ index 3cc9308a42..32b25b9202 100644
          android:name=".App"
          android:allowBackup="false"
 diff --git a/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java b/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
-index b6d7d8b058..f75d734594 100644
+index b6d7d8b058..9df1e387d1 100644
 --- a/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
 +++ b/app/src/main/java/com/fongmi/android/tv/api/loader/JsLoader.java
-@@ -18,7 +18,19 @@ public class JsLoader {
+@@ -12,13 +12,25 @@ import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class JsLoader {
+ 
+-    private final ConcurrentHashMap<String, Spider> spiders;
++    private final Map<String, Spider> spiders;
+     private final Loader loader;
+     private volatile String recent;
  
      public JsLoader() {
          spiders = new ConcurrentHashMap<>();
@@ -39,15 +124,48 @@ index b6d7d8b058..f75d734594 100644
      }
  
      public void clear() {
-@@ -33,6 +45,7 @@ public class JsLoader {
+@@ -33,23 +45,35 @@ public class JsLoader {
      }
  
      public Spider getSpider(String key, String api, String ext, String jar) {
+-        return spiders.computeIfAbsent(key, k -> {
+-            try {
+-                Spider spider = loader.spider(api, BaseLoader.get().dex(jar));
+-                spider.siteKey = key;
+-                spider.init(App.get(), ext);
+-                return spider;
+-            } catch (Throwable e) {
+-                SpiderDebug.log("JsLoader", "JS spider init failed: key=%s api=%s", key, api);
+-                SpiderDebug.log("JsLoader", e);
+-                e.printStackTrace();
+-                return new SpiderNull();
+-            }
+-        });
 +        if (loader == null) return new SpiderNull();
-         return spiders.computeIfAbsent(key, k -> {
-             try {
-                 Spider spider = loader.spider(api, BaseLoader.get().dex(jar));
-@@ -49,7 +62,7 @@ public class JsLoader {
++        // ConcurrentHashMap.computeIfAbsent 是 Java 8 / API 24 才有的方法，Android 6.0
++        // (API 23) 上会抛 NoSuchMethodError；用 synchronized + get/put 等价实现，
++        // 保留“同一 key 只创建一次”的原子语义。
++        synchronized (spiders) {
++            Spider cached = spiders.get(key);
++            if (cached != null) return cached;
++            Spider spider = createSpider(key, api, ext, jar);
++            spiders.put(key, spider);
++            return spider;
++        }
++    }
++
++    private Spider createSpider(String key, String api, String ext, String jar) {
++        try {
++            Spider spider = loader.spider(api, BaseLoader.get().dex(jar));
++            spider.siteKey = key;
++            spider.init(App.get(), ext);
++            return spider;
++        } catch (Throwable e) {
++            SpiderDebug.log("JsLoader", "JS spider init failed: key=%s api=%s", key, api);
++            SpiderDebug.log("JsLoader", e);
++            e.printStackTrace();
++            return new SpiderNull();
++        }
      }
  
      public Object[] proxy(Map<String, String> params) throws Exception {
@@ -57,10 +175,17 @@ index b6d7d8b058..f75d734594 100644
          return spider != null ? spider.proxy(params) : null;
      }
 diff --git a/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java b/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
-index d879091ddb..d50c53a7c4 100644
+index d879091ddb..dfcb18f25e 100644
 --- a/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
 +++ b/app/src/main/java/com/fongmi/android/tv/api/loader/PyLoader.java
-@@ -18,7 +18,22 @@ public class PyLoader {
+@@ -12,13 +12,28 @@ import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class PyLoader {
+ 
+-    private final ConcurrentHashMap<String, Spider> spiders;
++    private final Map<String, Spider> spiders;
+     private final Loader loader;
+     private volatile String recent;
  
      public PyLoader() {
          spiders = new ConcurrentHashMap<>();
@@ -84,15 +209,47 @@ index d879091ddb..d50c53a7c4 100644
      }
  
      public void clear() {
-@@ -32,6 +47,7 @@ public class PyLoader {
+@@ -32,17 +47,28 @@ public class PyLoader {
      }
  
      public Spider getSpider(String key, String api, String ext) {
+-        return spiders.computeIfAbsent(key, k -> {
+-            try {
+-                Spider spider = loader.spider(api);
+-                spider.siteKey = key;
+-                spider.init(App.get(), normalizeExt(ext));
+-                return spider;
+-            } catch (Throwable e) {
+-                e.printStackTrace();
+-                return new SpiderNull();
+-            }
+-        });
 +        if (loader == null) return new SpiderNull();
-         return spiders.computeIfAbsent(key, k -> {
-             try {
-                 Spider spider = loader.spider(api);
-@@ -54,7 +70,7 @@ public class PyLoader {
++        // ConcurrentHashMap.computeIfAbsent 是 Java 8 / API 24 才有的方法，Android 6.0
++        // (API 23) 上会抛 NoSuchMethodError；用 synchronized + get/put 等价实现。
++        synchronized (spiders) {
++            Spider cached = spiders.get(key);
++            if (cached != null) return cached;
++            Spider spider = createSpider(key, api, ext);
++            spiders.put(key, spider);
++            return spider;
++        }
++    }
++
++    private Spider createSpider(String key, String api, String ext) {
++        try {
++            Spider spider = loader.spider(api);
++            spider.siteKey = key;
++            spider.init(App.get(), normalizeExt(ext));
++            return spider;
++        } catch (Throwable e) {
++            e.printStackTrace();
++            return new SpiderNull();
++        }
+     }
+ 
+     private String normalizeExt(String ext) {
+@@ -54,7 +80,7 @@ public class PyLoader {
      }
  
      public Object[] proxy(Map<String, String> params) throws Exception {
@@ -101,32 +258,530 @@ index d879091ddb..d50c53a7c4 100644
          Spider spider = spiders.get(recent);
          return spider != null ? spider.proxy(params) : null;
      }
+diff --git a/app/src/main/java/com/fongmi/android/tv/bean/Vod.java b/app/src/main/java/com/fongmi/android/tv/bean/Vod.java
+index b8995e1ebb..ae15114320 100644
+--- a/app/src/main/java/com/fongmi/android/tv/bean/Vod.java
++++ b/app/src/main/java/com/fongmi/android/tv/bean/Vod.java
+@@ -132,7 +132,7 @@ public class Vod implements Parcelable, Diffable<Vod> {
+     }
+ 
+     public String getName() {
+-        return TextUtils.isEmpty(vodName) ? "" : Html.fromHtml(vodName, Html.FROM_HTML_MODE_LEGACY).toString().trim();
++        return TextUtils.isEmpty(vodName) ? "" : Util.fromHtml(vodName).toString().trim();
+     }
+ 
+     public void setName(String vodName) {
+diff --git a/app/src/main/java/com/fongmi/android/tv/player/PlaybackCompatibilityRetentionPolicy.java b/app/src/main/java/com/fongmi/android/tv/player/PlaybackCompatibilityRetentionPolicy.java
+index 75018daa2e..34a0add28b 100644
+--- a/app/src/main/java/com/fongmi/android/tv/player/PlaybackCompatibilityRetentionPolicy.java
++++ b/app/src/main/java/com/fongmi/android/tv/player/PlaybackCompatibilityRetentionPolicy.java
+@@ -17,7 +17,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
+     }
+ 
+     public static Evidence currentEvidence() {
+-        EnumMap<Requirement, Coverage> coverage =
++        Map<Requirement, Coverage> coverage =
+                 new EnumMap<>(Requirement.class);
+ 
+         // Existing recovery is deliberately classified as limited until it
+@@ -166,7 +166,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
+     public record Evidence(Map<Requirement, Coverage> coverage) {
+ 
+         public Evidence {
+-            EnumMap<Requirement, Coverage> safe =
++            Map<Requirement, Coverage> safe =
+                     new EnumMap<>(Requirement.class);
+             if (coverage != null) safe.putAll(coverage);
+             safe.entrySet().removeIf(entry -> entry.getValue() == null);
+@@ -178,7 +178,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
+         }
+ 
+         public static Evidence allReliable() {
+-            EnumMap<Requirement, Coverage> coverage =
++            Map<Requirement, Coverage> coverage =
+                     new EnumMap<>(Requirement.class);
+             for (Requirement requirement : Requirement.values()) {
+                 coverage.put(requirement, Coverage.RELIABLE);
+@@ -194,7 +194,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
+         public Evidence with(
+                 Requirement requirement,
+                 Coverage value) {
+-            EnumMap<Requirement, Coverage> updated =
++            Map<Requirement, Coverage> updated =
+                     new EnumMap<>(Requirement.class);
+             updated.putAll(coverage);
+             if (requirement != null) {
+diff --git a/app/src/main/java/com/fongmi/android/tv/player/PlaybackDiagnosticCollector.java b/app/src/main/java/com/fongmi/android/tv/player/PlaybackDiagnosticCollector.java
+index 3fec0b18e9..8578ba16fc 100644
+--- a/app/src/main/java/com/fongmi/android/tv/player/PlaybackDiagnosticCollector.java
++++ b/app/src/main/java/com/fongmi/android/tv/player/PlaybackDiagnosticCollector.java
+@@ -1,5 +1,6 @@
+ package com.fongmi.android.tv.player;
+ 
++import java.util.Map;
+ import android.media.MediaCodec;
+ import android.os.Build;
+ import android.os.SystemClock;
+@@ -21,7 +22,7 @@ import static com.github.catvod.crawler.diagnostics.DiagnosticEvent.Status.*;
+ public final class PlaybackDiagnosticCollector {
+     public record Context(String trace, long generation, long attempt, String mediaId, String role) {}
+     private static final AtomicLong IDS = new AtomicLong();
+-    private static final WeakHashMap<Object, String> OBJECT_IDS = new WeakHashMap<>();
++    private static final Map<Object, String> OBJECT_IDS = new WeakHashMap<>();
+     private final String instance = id("player");
+     private final String engine, version;
+     private final AtomicLong sequence = new AtomicLong();
+diff --git a/app/src/main/java/com/fongmi/android/tv/player/PlaybackProfileAbStore.java b/app/src/main/java/com/fongmi/android/tv/player/PlaybackProfileAbStore.java
+index 907154149b..05cfbd9d01 100644
+--- a/app/src/main/java/com/fongmi/android/tv/player/PlaybackProfileAbStore.java
++++ b/app/src/main/java/com/fongmi/android/tv/player/PlaybackProfileAbStore.java
+@@ -23,7 +23,7 @@ public final class PlaybackProfileAbStore {
+ 
+     private final Backend backend;
+     private final Map<PlaybackProfileAbPolicy.GroupKey,
+-            EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> groups =
++            Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> groups =
+             new LinkedHashMap<>();
+     private boolean loaded;
+ 
+@@ -40,7 +40,7 @@ public final class PlaybackProfileAbStore {
+         Sample stored = sample.recordedAtEpochMs() == nowEpochMs
+                 ? sample
+                 : sample.withRecordedAt(nowEpochMs);
+-        EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
++        Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
+                 groups.computeIfAbsent(
+                         stored.groupKey(),
+                         ignored -> new EnumMap<>(
+@@ -80,7 +80,7 @@ public final class PlaybackProfileAbStore {
+     private Snapshot snapshotLocked() {
+         List<GroupSamples> result = new ArrayList<>();
+         for (Map.Entry<PlaybackProfileAbPolicy.GroupKey,
+-                EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
++                Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
+                 : groups.entrySet()) {
+             List<Sample> automatic = new ArrayList<>(entry.getValue()
+                     .getOrDefault(PlaybackProfileAbPolicy.Arm.AUTO,
+@@ -137,7 +137,7 @@ public final class PlaybackProfileAbStore {
+ 
+     private void addLoaded(Sample sample) {
+         if (sample == null || !sample.valid()) return;
+-        EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
++        Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
+                 groups.computeIfAbsent(
+                         sample.groupKey(),
+                         ignored -> new EnumMap<>(
+@@ -155,11 +155,11 @@ public final class PlaybackProfileAbStore {
+         if (nowEpochMs <= 0) return false;
+         boolean changed = false;
+         Iterator<Map.Entry<PlaybackProfileAbPolicy.GroupKey,
+-                EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>>
++                Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>>
+                 groupIterator = groups.entrySet().iterator();
+         while (groupIterator.hasNext()) {
+             Map.Entry<PlaybackProfileAbPolicy.GroupKey,
+-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>
++                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>
+                     group = groupIterator.next();
+             for (List<Sample> samples : group.getValue().values()) {
+                 changed |= samples.removeIf(sample -> expired(
+@@ -201,7 +201,7 @@ public final class PlaybackProfileAbStore {
+             PlaybackProfileAbPolicy.GroupKey victim = null;
+             long oldestNewestSample = Long.MAX_VALUE;
+             for (Map.Entry<PlaybackProfileAbPolicy.GroupKey,
+-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
++                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
+                     : groups.entrySet()) {
+                 long newest = newestSampleAt(entry.getValue());
+                 if (victim == null || newest < oldestNewestSample) {
+@@ -215,7 +215,7 @@ public final class PlaybackProfileAbStore {
+     }
+ 
+     private static long newestSampleAt(
+-            EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms) {
++            Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms) {
+         long newest = -1;
+         if (arms == null) return newest;
+         for (List<Sample> samples : arms.values()) {
+@@ -301,10 +301,10 @@ public final class PlaybackProfileAbStore {
+ 
+     private static String encode(
+             Map<PlaybackProfileAbPolicy.GroupKey,
+-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>
++                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>
+                     groups) {
+         List<Sample> samples = new ArrayList<>();
+-        for (EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms
++        for (Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms
+                 : groups.values()) {
+             for (List<Sample> armSamples : arms.values()) {
+                 samples.addAll(armSamples);
+diff --git a/app/src/main/java/com/fongmi/android/tv/player/exo/ExoTunnelingRuntimeState.java b/app/src/main/java/com/fongmi/android/tv/player/exo/ExoTunnelingRuntimeState.java
+index 159cfabc2d..af058ddb6b 100644
+--- a/app/src/main/java/com/fongmi/android/tv/player/exo/ExoTunnelingRuntimeState.java
++++ b/app/src/main/java/com/fongmi/android/tv/player/exo/ExoTunnelingRuntimeState.java
+@@ -1,5 +1,6 @@
+ package com.fongmi.android.tv.player.exo;
+ 
++import java.util.Map;
+ import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+@@ -7,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger;
+ public final class ExoTunnelingRuntimeState {
+ 
+     public static final int BLACKLIST_THRESHOLD = 2;
+-    private static final ConcurrentHashMap<String, AtomicInteger> failures = new ConcurrentHashMap<>();
++    private static final Map<String, AtomicInteger> failures = new ConcurrentHashMap<>();
+ 
+     private ExoTunnelingRuntimeState() {
+     }
+diff --git a/app/src/main/java/com/fongmi/android/tv/player/karaoke/KaraokeTrackRepository.java b/app/src/main/java/com/fongmi/android/tv/player/karaoke/KaraokeTrackRepository.java
+index 09f94f20cd..0a611e8a0c 100644
+--- a/app/src/main/java/com/fongmi/android/tv/player/karaoke/KaraokeTrackRepository.java
++++ b/app/src/main/java/com/fongmi/android/tv/player/karaoke/KaraokeTrackRepository.java
+@@ -667,7 +667,7 @@ public class KaraokeTrackRepository {
+ 
+     static String html(String text) {
+         if (TextUtils.isEmpty(text)) return "";
+-        return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
++        return com.fongmi.android.tv.utils.Util.fromHtml(text).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
+     }
+ 
+     static String normalizeSearch(String value) {
+diff --git a/app/src/main/java/com/fongmi/android/tv/service/PlaybackService.java b/app/src/main/java/com/fongmi/android/tv/service/PlaybackService.java
+index f0a5ffb5bc..46a89fc330 100644
+--- a/app/src/main/java/com/fongmi/android/tv/service/PlaybackService.java
++++ b/app/src/main/java/com/fongmi/android/tv/service/PlaybackService.java
+@@ -2,6 +2,7 @@ package com.fongmi.android.tv.service;
+ 
+ import android.app.PendingIntent;
+ import android.content.Intent;
++import android.os.Build;
+ import android.os.Binder;
+ import android.os.Bundle;
+ import android.os.IBinder;
+@@ -261,7 +262,14 @@ public class PlaybackService extends MediaLibraryService implements MediaLibrary
+     }
+ 
+     private void removeForeground() {
+-        stopForeground(STOP_FOREGROUND_REMOVE);
++        // Service.stopForeground(int) 是 API 24 (Android 7.0) 才有的重载，Android 6.0
++        // (API 23) 上调用会抛 NoSuchMethodError
++        // （已在真机 192.168.8.5 上复现于 PlaybackService.removeForeground）。
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++            stopForeground(STOP_FOREGROUND_REMOVE);
++        } else {
++            stopForeground(true);
++        }
+     }
+ 
+     private void saveProgress() {
+diff --git a/app/src/main/java/com/fongmi/android/tv/setting/Setting.java b/app/src/main/java/com/fongmi/android/tv/setting/Setting.java
+index 4a2e928c63..002ba22e41 100644
+--- a/app/src/main/java/com/fongmi/android/tv/setting/Setting.java
++++ b/app/src/main/java/com/fongmi/android/tv/setting/Setting.java
+@@ -400,7 +400,13 @@ public class Setting {
+         Locale locale = language == LANGUAGE_TRADITIONAL ? Locale.TRADITIONAL_CHINESE : Locale.SIMPLIFIED_CHINESE;
+         Configuration config = new Configuration(context.getResources().getConfiguration());
+         config.setLocale(locale);
+-        config.setLocales(new LocaleList(locale));
++        // Configuration.setLocales(List<Locale>) 与 LocaleList 构造器都是 API 24
++        // (Android 7.0) 才有的，Android 6.0 (API 23) 上调用会抛 NoSuchMethodError。
++        // 本方法在 BaseActivity.attachBaseContext 里被调用，每个 Activity 都会走到，
++        // 因此必须做版本分派；API 23 用 setLocale（API 1 即有）即可。
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++            config.setLocales(new LocaleList(locale));
++        }
+         return context.createConfigurationContext(config);
+     }
+ 
+@@ -434,7 +440,12 @@ public class Setting {
+         float factor = getUiScaleFactor(scale);
+         Configuration config = new Configuration(context.getResources().getConfiguration());
+         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+-        int stableDensity = DisplayMetrics.DENSITY_DEVICE_STABLE > 0 ? DisplayMetrics.DENSITY_DEVICE_STABLE : metrics.densityDpi;
++        // DisplayMetrics.DENSITY_DEVICE_STABLE 是 API 24 (Android 7.0) 才有的静态字段，
++        // Android 6.0 (API 23) 上访问会抛 NoSuchFieldError。
++        int stableDensity = metrics.densityDpi;
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && DisplayMetrics.DENSITY_DEVICE_STABLE > 0) {
++            stableDensity = DisplayMetrics.DENSITY_DEVICE_STABLE;
++        }
+         int densityDpi = Math.max(DisplayMetrics.DENSITY_LOW, Math.round(stableDensity * factor));
+         config.densityDpi = densityDpi;
+         config.fontScale = 1.0f;
+diff --git a/app/src/main/java/com/fongmi/android/tv/ui/activity/PlaybackActivity.java b/app/src/main/java/com/fongmi/android/tv/ui/activity/PlaybackActivity.java
+index e721aaad2a..e3fa77a8f6 100644
+--- a/app/src/main/java/com/fongmi/android/tv/ui/activity/PlaybackActivity.java
++++ b/app/src/main/java/com/fongmi/android/tv/ui/activity/PlaybackActivity.java
+@@ -1,5 +1,6 @@
+ package com.fongmi.android.tv.ui.activity;
+ 
++import android.os.Build;
+ import android.app.PendingIntent;
+ import android.content.ComponentName;
+ import android.content.Intent;
+@@ -12,6 +13,7 @@ import android.view.SurfaceView;
+ import android.view.TextureView;
+ import android.view.View;
+ import android.view.ViewTreeObserver;
++import android.view.Display;
+ import android.view.WindowManager;
+ import android.view.KeyEvent;
+ import android.view.MotionEvent;
+@@ -418,6 +420,10 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
+     }
+ 
+     private void closePiP() {
++        // Activity.isInPictureInPictureMode() 是 API 24 (Android 7.0) 才有的方法，
++        // 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
++        // （已在真机 192.168.8.5 上复现于 PlaybackActivity.closePiP）。
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+         if (!isInPictureInPictureMode()) return;
+         detach();
+         finish();
+@@ -504,12 +510,27 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
+                 + " content=" + viewSize(content)
+                 + " surface=" + surfaceName(surface) + ":" + viewSize(surface)
+                 + " holder=" + surfaceHolderSize(surface)
+-                + " rotation=" + (getDisplay() == null ? -1 : getDisplay().getRotation())
++                + " rotation=" + displayRotation()
+                 + " orientation=" + getResources().getConfiguration().orientation;
+         Log.d(SIZE_TAG, message);
+         if (SpiderDebug.isEnabled()) SpiderDebug.log("surface-size", "%s", message);
+     }
+ 
++    /**
++     * 当前屏幕旋转角。Activity.getDisplay() 是 API 30 (Android 11) 才有的方法，
++     * 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
++     * （已在真机 192.168.8.5 上复现于 PlaybackActivity.logSurfaceState）。
++     */
++    private int displayRotation() {
++        try {
++            WindowManager manager = getWindowManager();
++            Display display = manager == null ? null : manager.getDefaultDisplay();
++            return display == null ? -1 : display.getRotation();
++        } catch (Throwable t) {
++            return -1;
++        }
++    }
++
+     private static String viewSize(View view) {
+         if (view == null) return "null";
+         return view.getWidth() + "x" + view.getHeight();
+diff --git a/app/src/main/java/com/fongmi/android/tv/ui/dialog/GitCloudDialog.java b/app/src/main/java/com/fongmi/android/tv/ui/dialog/GitCloudDialog.java
+index 89d312ce6f..ef6ea5d23c 100644
+--- a/app/src/main/java/com/fongmi/android/tv/ui/dialog/GitCloudDialog.java
++++ b/app/src/main/java/com/fongmi/android/tv/ui/dialog/GitCloudDialog.java
+@@ -2155,7 +2155,12 @@ public class GitCloudDialog extends BaseAlertDialog {
+         edit.setTextColor(Color.parseColor("#202124"));
+         edit.setHintTextColor(Color.parseColor("#5F6368"));
+         edit.setSelectAllOnFocus(false);
+-        edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
++        // View.setImportantForAutofill(int) 是 API 26 (Android 8.0) 才有的方法，
++        // Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
++        // （已在真机 192.168.8.5 上复现于 GitCloudDialog.input）。
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
++        }
+         if (password) edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+         layout.addView(edit, new LinearLayoutCompat.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+         return new TextInput(layout, edit);
+diff --git a/app/src/main/java/com/fongmi/android/tv/ui/dialog/RemoteTrustDialog.java b/app/src/main/java/com/fongmi/android/tv/ui/dialog/RemoteTrustDialog.java
+index 324a3584ac..c4b9547c72 100644
+--- a/app/src/main/java/com/fongmi/android/tv/ui/dialog/RemoteTrustDialog.java
++++ b/app/src/main/java/com/fongmi/android/tv/ui/dialog/RemoteTrustDialog.java
+@@ -1,5 +1,6 @@
+ package com.fongmi.android.tv.ui.dialog;
+ 
++import android.os.Build;
+ import android.content.ClipData;
+ import android.content.ClipboardManager;
+ import android.content.Context;
+@@ -3085,7 +3086,12 @@ public final class RemoteTrustDialog {
+         input.setSingleLine(singleLine);
+         input.setTextSize(14);
+         input.setMinHeight(dp(context, 46));
+-        input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
++        // View.setImportantForAutofill(int) 是 API 26 (Android 8.0) 才有的方法，
++        // Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
++        // （同 GitCloudDialog.input，已在真机 192.168.8.5 上复现）。
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
++        }
+         input.setSelectAllOnFocus(false);
+         input.setTextColor(Color.BLACK);
+         input.setHintTextColor(Color.parseColor("#666666"));
+diff --git a/app/src/main/java/com/fongmi/android/tv/utils/ScanTask.java b/app/src/main/java/com/fongmi/android/tv/utils/ScanTask.java
+index cefd12a4b2..7a001145d2 100644
+--- a/app/src/main/java/com/fongmi/android/tv/utils/ScanTask.java
++++ b/app/src/main/java/com/fongmi/android/tv/utils/ScanTask.java
+@@ -29,7 +29,7 @@ public class ScanTask {
+     private static final int PORT_END = 9998;
+     private static final int PARALLELISM = 64;
+ 
+-    private final CopyOnWriteArrayList<Future<?>> future;
++    private final List<Future<?>> future;
+     private final ExecutorService executor;
+     private final OkHttpClient client;
+     private Listener listener;
+diff --git a/app/src/main/java/com/fongmi/android/tv/utils/Util.java b/app/src/main/java/com/fongmi/android/tv/utils/Util.java
+index ef5532b51f..53a5242e2f 100644
+--- a/app/src/main/java/com/fongmi/android/tv/utils/Util.java
++++ b/app/src/main/java/com/fongmi/android/tv/utils/Util.java
+@@ -9,6 +9,7 @@ import android.os.Build;
+ import android.os.IBinder;
+ import android.provider.Settings;
+ import android.text.Html;
++import android.text.Spanned;
+ import android.text.TextUtils;
+ import android.view.View;
+ import android.view.Window;
+@@ -123,10 +124,24 @@ public class Util {
+         }
+     }
+ 
++    /**
++     * 解析 HTML 文本。
++     * Html.fromHtml(String, int) 是 API 24 才引入的重载，Android 6.0 (API 23) 只有
++     * Html.fromHtml(String)，直接调用新重载会在 API 23 上抛 NoSuchMethodError
++     * （已在真机 192.168.8.5 上复现于 Vod.getName）。这里按版本分派统一兼容。
++     */
++    @SuppressWarnings("deprecation")
++    public static Spanned fromHtml(String text) {
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
++            return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY);
++        }
++        return Html.fromHtml(text);
++    }
++
+     public static String clean(String text) {
+         if (!text.contains("<")) return text;
+         StringBuilder sb = new StringBuilder();
+-        text = Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString().replace("\u00A0", " ").replace("\u3000", " ");
++        text = fromHtml(text).toString().replace("\u00A0", " ").replace("\u3000", " ");
+         for (String line : text.split("\\r?\\n")) sb.append(line.trim()).append("\n");
+         return substring(sb.toString()).trim();
+     }
+diff --git a/app/src/mobile/java/com/fongmi/android/tv/ui/activity/LiveActivity.java b/app/src/mobile/java/com/fongmi/android/tv/ui/activity/LiveActivity.java
+index 01ec1ef059..5d52269ea5 100644
+--- a/app/src/mobile/java/com/fongmi/android/tv/ui/activity/LiveActivity.java
++++ b/app/src/mobile/java/com/fongmi/android/tv/ui/activity/LiveActivity.java
+@@ -104,6 +104,15 @@ import java.util.List;
+ 
+ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.Listener, TrackDialog.Listener, Biometric.Callback, PassListener, ConfigListener, LiveListener, GroupAdapter.OnClickListener, ChannelAdapter.OnClickListener, EpgDataAdapter.OnClickListener, CastDialog.Listener, InfoDialog.Listener, LiveControlDialog.Listener, LiveEpgDialog.Listener {
+ 
++    /**
++     * Activity.isInPictureInPictureMode() 是 API 24 (Android 7.0) 才有的方法，
++     * 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError，统一走这里做版本分派。
++     */
++    private boolean inPictureInPictureMode() {
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
++        return isInPictureInPictureMode();
++    }
++
+     private static final int LIVE_PIP_WIDTH = 16;
+     private static final int LIVE_PIP_HEIGHT = 9;
+     private static final String ORIENTATION_TAG = "LiveOrientation";
+@@ -596,7 +605,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
+     }
+ 
+     private void enterFullscreenLiveOnPad() {
+-        if (!isPadLiveFullscreenMode() || isRotate() || isInPictureInPictureMode()) return;
++        if (!isPadLiveFullscreenMode() || isRotate() || inPictureInPictureMode()) return;
+         requestOrientation("enter-fullscreen-pad", getFullscreenOrient());
+         if (!ResUtil.isLand(this)) return;
+         enterFullscreenLive();
+@@ -640,7 +649,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
+     }
+ 
+     private void applyPadLiveMode() {
+-        if (!ResUtil.isPad() || isInPictureInPictureMode()) return;
++        if (!ResUtil.isPad() || inPictureInPictureMode()) return;
+         if (PlayerSetting.isPadLiveFullscreen()) {
+             enterFullscreenLiveOnPad();
+         } else if (!isRotate()) {
+@@ -835,7 +844,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
+     }
+ 
+     private boolean isEmbeddedLiveUi() {
+-        return !ResUtil.isLand(this) && !isRotate() && !isInPictureInPictureMode();
++        return !ResUtil.isLand(this) && !isRotate() && !inPictureInPictureMode();
+     }
+ 
+     private void keepLiveMenuVisible() {
+@@ -868,7 +877,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
+     }
+ 
+     private void showControl() {
+-        if (service() == null || isInPictureInPictureMode()) return;
++        if (service() == null || inPictureInPictureMode()) return;
+         setPlayParamsState();
+         boolean embedded = isEmbeddedLiveUi();
+         if (!embedded && isVisible(mBinding.recycler)) hideUI(false);
+@@ -910,7 +919,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
+     }
+ 
+     private void showInfo() {
+-        mBinding.widget.infoPip.setVisibility(isInPictureInPictureMode() ? View.VISIBLE : View.GONE);
++        mBinding.widget.infoPip.setVisibility(inPictureInPictureMode() ? View.VISIBLE : View.GONE);
+         mBinding.widget.info.setVisibility(isInPictureInPictureMode() ? View.GONE : View.VISIBLE);
+         setR3Callback();
+         hideControl();
+diff --git a/catvod/src/main/java/com/github/catvod/crawler/diagnostics/DiagnosticReport.java b/catvod/src/main/java/com/github/catvod/crawler/diagnostics/DiagnosticReport.java
+index ebf5a74f04..de91dff6c7 100644
+--- a/catvod/src/main/java/com/github/catvod/crawler/diagnostics/DiagnosticReport.java
++++ b/catvod/src/main/java/com/github/catvod/crawler/diagnostics/DiagnosticReport.java
+@@ -91,7 +91,7 @@ public final class DiagnosticReport {
+     private static final class Session {
+         final String run, trace, instance, engine;
+         final long attempt;
+-        final LinkedHashMap<String, JsonObject> facts = new LinkedHashMap<>();
++        final Map<String, JsonObject> facts = new LinkedHashMap<>();
+         final LinkedHashMap<String, String> errors = new LinkedHashMap<>();
+         int video = -1, audio = -1;
+         String videoId = "none", audioId = "none";
+diff --git a/catvod/src/main/java/com/github/catvod/net/CookieStore.java b/catvod/src/main/java/com/github/catvod/net/CookieStore.java
+index c4c06eb801..af1bf11626 100644
+--- a/catvod/src/main/java/com/github/catvod/net/CookieStore.java
++++ b/catvod/src/main/java/com/github/catvod/net/CookieStore.java
+@@ -12,7 +12,7 @@ import okhttp3.Response;
+ 
+ public class CookieStore {
+ 
+-    private static final ConcurrentHashMap<String, String> COOKIES = new ConcurrentHashMap<>();
++    private static final Map<String, String> COOKIES = new ConcurrentHashMap<>();
+ 
+     public static void save(Request request) {
+         if (request == null) return;
 diff --git a/chaquo/build.gradle b/chaquo/build.gradle
-index 612e9bb04f..9b8396b7b4 100644
+index 612e9bb04f..1d8853f02e 100644
 --- a/chaquo/build.gradle
 +++ b/chaquo/build.gradle
-@@ -12,6 +12,12 @@ android {
+@@ -12,6 +12,13 @@ android {
          minSdk libs.versions.minSdk.get().toInteger()
          targetSdk libs.versions.targetSdk.get().toInteger()
          python {
 +            // Chaquopy 17 only supports Python >= 3.10. Its pypi-13.1 mirror ships the
 +            // >=3.10 wheels tagged android_24 (API 24+), which Chaquopy rejects when the
-+            // project minSdk is 23. We keep 3.10 and instead patch Chaquopy's wheel
-+            // platform-tag floor to 24 at build time (see scripts/patch_chaquopy_minsdk.sh),
-+            // so the android_24 wheels are selected. These pure-C packages (lxml,
-+            // pycryptodome, ujson) load fine on API 23 at runtime.
++            // project minSdk is 23. We keep 3.10 and use the vendored plugin in
++            // vendor/chaquopy (MIN_SDK_VERSION=23 + --min-api-level floor 24, see
++            // vendor/chaquopy/README.md), so the android_24 wheels are selected.
++            // These pure-C packages (lxml, pycryptodome, ujson) load fine on API 23
++            // at runtime.
              version = "3.10"
              pip {
                  install("-r", "requirements.txt")
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index a9aded54dd..f4049a8605 100644
+index a9aded54dd..2e2c30b79e 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
 @@ -1,7 +1,7 @@
  [versions]
  agp = "9.2.1"
- python = "17.0.0"
+-python = "17.0.0"
 -minSdk = "24"
++python = "17.2.0"
 +minSdk = "23"
  targetSdk = "28"
  compileSdk = "37"
@@ -285,120 +940,6 @@ index b007fdf19c..2b47ee72c9 100755
      [ "$target" != "ffmpeg" ] || verify_curl_ffmpeg_compat
    done
    stage_abi "$arch" "$abi" "$prefix_name" "$cxx_abi"
-diff --git a/scripts/patch_chaquopy_minsdk.sh b/scripts/patch_chaquopy_minsdk.sh
-new file mode 100755
-index 0000000000..34105e898a
---- /dev/null
-+++ b/scripts/patch_chaquopy_minsdk.sh
-@@ -0,0 +1,108 @@
-+#!/usr/bin/env bash
-+#
-+# patch_chaquopy_minsdk.sh
-+#
-+# webhtv 为支持 Android 6.0 (API 23) 把 minSdk 降到 23，但 Chaquopy 17.0.0 的 Gradle
-+# 插件有两处会因此失败，本脚本对 ~/.gradle/caches 里的插件 jar（构建缓存）打两处补丁：
-+#
-+#   1) 配置期守卫 (PythonPlugin.onVariant)
-+#      Chaquopy 16.0.0+ 硬编码了 "minSdk >= 24" 策略守卫：
-+#      "This version of Chaquopy requires minSdk version 24 or higher"。
-+#      把 `bipush 24` 改成 `bipush 1`（apiLevel >= 1 永远成立）即可让它永不触发。
-+#
-+#   2) 构建期 wheel 平台标签下限 (chaquopy/pip_install.py -> platform_tag)
-+#      Chaquopy 把项目 minSdk 作为 --min-api-level 传给 pip，于是只匹配
-+#      `android_<minSdk>_*` 的 wheel。但 Chaquopy 的 pypi 镜像里所有 Python >= 3.10
-+#      的 wheel 都打在 `android_24_*`（API 24+），minSdk=23 时 pip 报
-+#      "from versions: none"（lxml/ujson/pycryptodome 等装不上）。
-+#      把平台标签下限抬到 24（max(min_api_level, 24)）即可让这些 wheel 被选中。
-+#      这是构建期选择逻辑，运行时这些纯 C 包在 API 23 上仍可正常加载。
-+#
-+# 注意：
-+#   - Chaquopy 17.0.0 支持 AGP 7.3–9.2，降级到支持 API 23 的 15.0.1 会与本项目
-+#     的 Gradle 9.5.1 / AGP 9.x 冲突，因此走"打补丁"而非"降级"。
-+#   - 本脚本修改的是 ~/.gradle/caches 里的插件 jar（构建缓存），不是仓库文件。
-+#     执行 `./gradlew --refresh-dependencies` 或清缓存后需重新运行本脚本。
-+#   - 运行时 Python 解释器是懒加载（仅在使用 Python Spider 时触发），
-+#      即使 Python 运行时在 API 23 上有个别兼容问题，App 仍能安装/启动/播视频。
-+#   - 备份只在“确实要打补丁前”从原始 jar 创建，文件名为 <jar>.chaquopy_patched.bak；
-+#     若曾用其他方式打过补丁（备份名为 <jar>.chaquopy_minsdk.bak），回退时同样识别。
-+#
-+set -euo pipefail
-+
-+CACHE_ROOT="$HOME/.gradle/caches/modules-2/files-2.1/com.chaquo.python/gradle"
-+
-+find "$CACHE_ROOT" -type f -name 'gradle-*.jar' 2>/dev/null | while IFS= read -r JAR; do
-+  [ -n "$JAR" ] || continue
-+  python3 - "$JAR" <<'PY'
-+import sys, zipfile, shutil, os, io
-+
-+# --- 补丁常量（必须定义在 Python 段内；外层 heredoc 为引号包裹，bash 变量不会注入） ---
-+GUARD_NEEDLE = b'\x10\x18\xa2'   # bipush 24 ; if_icmpge
-+GUARD_REPL  = b'\x10\x01\xa2'    # bipush 1  ; if_icmpge  -> apiLevel >= 1 always true
-+
-+PY_OLD = b'return "android_{}_{}".format(self.min_api_level, re.sub(r"[-.]", "_", abi))'
-+PY_NEW = b'return "android_{}_{}".format(max(self.min_api_level, 24), re.sub(r"[-.]", "_", abi))'
-+
-+jar = sys.argv[1]
-+if not os.path.exists(jar):
-+    print(f"跳过（不存在）: {jar}")
-+    sys.exit(0)
-+
-+with zipfile.ZipFile(jar) as z:
-+    names = z.namelist()
-+    if 'com/chaquo/python/PythonPlugin.class' not in names:
-+        print(f"跳过 {jar}：不含 PythonPlugin.class")
-+        sys.exit(0)
-+    if 'com/chaquo/python/gradle/build-packages.zip' not in names:
-+        print(f"跳过 {jar}：不含 build-packages.zip")
-+        sys.exit(0)
-+    data = {n: z.read(n) for n in names}
-+
-+cls = data['com/chaquo/python/PythonPlugin.class']
-+with io.BytesIO(data['com/chaquo/python/gradle/build-packages.zip']) as bz:
-+    with zipfile.ZipFile(bz) as _z:
-+        bnames = _z.namelist()
-+        assert 'chaquopy/pip_install.py' in bnames, "pip_install.py 缺失"
-+        bdata = {n: _z.read(n) for n in bnames}
-+        py = bdata['chaquopy/pip_install.py']
-+
-+# 只在“确实要打补丁”时创建备份，确保备份始终是未打补丁的原始 jar
-+will_patch = (GUARD_NEEDLE in cls) or (PY_OLD in py)
-+backup = jar + '.chaquopy_patched.bak'
-+if will_patch and not os.path.exists(backup):
-+    shutil.copy2(jar, backup)
-+
-+# --- Patch 1: minSdk guard in PythonPlugin.class (bipush 24 -> bipush 1) ---
-+if GUARD_NEEDLE in cls:
-+    assert cls.count(GUARD_NEEDLE) == 1, "守卫特征不唯一，中止以防误改"
-+    data['com/chaquo/python/PythonPlugin.class'] = cls.replace(GUARD_NEEDLE, GUARD_REPL)
-+    print(f"守卫补丁：已应用 ({jar})")
-+else:
-+    print(f"守卫补丁：已打过/无需 ({jar})")
-+
-+# --- Patch 2: wheel platform-tag floor in pip_install.py (min_api_level -> max(...,24)) ---
-+if PY_OLD in py:
-+    bdata['chaquopy/pip_install.py'] = py.replace(PY_OLD, PY_NEW)
-+    buf = io.BytesIO()
-+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as out:
-+        for n, c in bdata.items():
-+            out.writestr(n, c)
-+    data['com/chaquo/python/gradle/build-packages.zip'] = buf.getvalue()
-+    print(f"平台标签补丁：已应用 ({jar})")
-+else:
-+    print(f"平台标签补丁：已打过/无需 ({jar})")
-+
-+if will_patch:
-+    tmp = jar + '.tmp'
-+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as out:
-+        for n, c in data.items():
-+            out.writestr(n, c)
-+    shutil.move(tmp, jar)
-+    print(f"已重写 jar（备份：{backup}）")
-+else:
-+    print(f"jar 已是最新（无需改动）：{jar}")
-+PY
-+done
-+
-+echo "Chaquopy 补丁完成。若曾改动 chaquo/build.gradle 的 python.version 或 minSdk，重新构建即可生效。"
 diff --git a/scripts/verify_exo_ass.py b/scripts/verify_exo_ass.py
 index 4f1c3cfa6e..c5c147c21e 100644
 --- a/scripts/verify_exo_ass.py
@@ -479,6 +1020,26 @@ index 92fe31204e..feb364385f 100755
        printf '%s\n' "$mpv_dynamic" | grep -F "Shared library: [$name]" >/dev/null || die "libmpv.so does not depend on $name for $abi"
      done
    fi
+diff --git a/settings.gradle b/settings.gradle
+index 087f899c38..8f423dbd0d 100644
+--- a/settings.gradle
++++ b/settings.gradle
+@@ -10,6 +10,15 @@ plugins {
+     id "org.gradle.toolchains.foojay-resolver-convention" version "1.0.0"
+ }
+ 
++// Chaquopy 插件使用 vendor/chaquopy 本地源码（API 23 适配补丁），替换 Central 官方产物。
++// runtime / target 仍走 Maven Central（版本见 vendor/chaquopy/VERSION.txt）。
++// 详见 vendor/chaquopy/README.md。
++includeBuild('vendor/chaquopy') {
++    dependencySubstitution {
++        substitute(module('com.chaquo.python:gradle')).using(project(':gradle'))
++    }
++}
++
+ dependencyResolutionManagement {
+     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+     repositories {
 diff --git a/third_party/mpv-native-overrides/libplacebo.sh b/third_party/mpv-native-overrides/libplacebo.sh
 index 31c8a97b6a..eac80b0a3d 100755
 --- a/third_party/mpv-native-overrides/libplacebo.sh
