@@ -1,0 +1,9 @@
+// vendor/chaquopy — Chaquopy 17.2.0 Gradle 插件（webhtv API 23 适配版）。
+// 改编自上游 product/settings.gradle：仅包含 :gradle（插件模块，目录 gradle-plugin）。
+// 上游的 :runtime 不在本 vendor 内——插件在应用构建时自行从 Maven Central 解析
+// com.chaquo.python.runtime:* 与 com.chaquo.python:target 产物（版本 = VERSION.txt）。
+// 项目名保持 "gradle"：PythonPlugin.findPlugin() 按 group:name = com.chaquo.python:gradle
+// 在 buildscript classpath 里定位插件版本，用于推导 runtime 产物版本。
+// 详见 README.md。
+include ':gradle'
+project(':gradle').projectDir = file('gradle-plugin')

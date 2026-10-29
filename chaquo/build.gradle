@@ -14,10 +14,11 @@ android {
         python {
             // Chaquopy 17 only supports Python >= 3.10. Its pypi-13.1 mirror ships the
             // >=3.10 wheels tagged android_24 (API 24+), which Chaquopy rejects when the
-            // project minSdk is 23. We keep 3.10 and instead patch Chaquopy's wheel
-            // platform-tag floor to 24 at build time (see scripts/patch_chaquopy_minsdk.sh),
-            // so the android_24 wheels are selected. These pure-C packages (lxml,
-            // pycryptodome, ujson) load fine on API 23 at runtime.
+            // project minSdk is 23. We keep 3.10 and use the vendored plugin in
+            // vendor/chaquopy (MIN_SDK_VERSION=23 + --min-api-level floor 24, see
+            // vendor/chaquopy/README.md), so the android_24 wheels are selected.
+            // These pure-C packages (lxml, pycryptodome, ujson) load fine on API 23
+            // at runtime.
             version = "3.10"
             pip {
                 install("-r", "requirements.txt")

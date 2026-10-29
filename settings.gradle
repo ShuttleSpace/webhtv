@@ -10,6 +10,15 @@ plugins {
     id "org.gradle.toolchains.foojay-resolver-convention" version "1.0.0"
 }
 
+// Chaquopy 插件使用 vendor/chaquopy 本地源码（API 23 适配补丁），替换 Central 官方产物。
+// runtime / target 仍走 Maven Central（版本见 vendor/chaquopy/VERSION.txt）。
+// 详见 vendor/chaquopy/README.md。
+includeBuild('vendor/chaquopy') {
+    dependencySubstitution {
+        substitute(module('com.chaquo.python:gradle')).using(project(':gradle'))
+    }
+}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
