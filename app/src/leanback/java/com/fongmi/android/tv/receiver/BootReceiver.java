@@ -5,6 +5,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
+import android.os.Build;
 
 import androidx.annotation.NonNull;
 
@@ -24,7 +27,24 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
     private void registerCallback() {
-        ((ConnectivityManager) App.get().getSystemService(Context.CONNECTIVITY_SERVICE)).registerDefaultNetworkCallback(new Callback());
+        ConnectivityManager manager = (ConnectivityManager) App.get().getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (manager == null) return;
+        try {
+            // ConnectivityManager.registerDefaultNetworkCallback 是 API 24 (Android 7.0)
+            // 才有的方法，Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
+            // （开机广播路径，必崩）。API 21+ 就有 registerNetworkCallback(NetworkRequest)，
+            // 这里显式构造一个"有网络即满足"的请求，语义等价。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                manager.registerDefaultNetworkCallback(new Callback());
+            } else {
+                NetworkRequest request = new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build();
+                manager.registerNetworkCallback(request, new Callback());
+            }
+        } catch (Throwable e) {
+            LiveConfig.get().init().load();
+        }
     }
 
     static class Callback extends ConnectivityManager.NetworkCallback {

@@ -104,6 +104,15 @@ import java.util.List;
 
 public class LiveActivity extends PlaybackActivity implements CustomKeyDown.Listener, TrackDialog.Listener, Biometric.Callback, PassListener, ConfigListener, LiveListener, GroupAdapter.OnClickListener, ChannelAdapter.OnClickListener, EpgDataAdapter.OnClickListener, CastDialog.Listener, InfoDialog.Listener, LiveControlDialog.Listener, LiveEpgDialog.Listener {
 
+    /**
+     * Activity.isInPictureInPictureMode() 是 API 24 (Android 7.0) 才有的方法，
+     * 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError，统一走这里做版本分派。
+     */
+    private boolean inPictureInPictureMode() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        return isInPictureInPictureMode();
+    }
+
     private static final int LIVE_PIP_WIDTH = 16;
     private static final int LIVE_PIP_HEIGHT = 9;
     private static final String ORIENTATION_TAG = "LiveOrientation";
@@ -596,7 +605,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void enterFullscreenLiveOnPad() {
-        if (!isPadLiveFullscreenMode() || isRotate() || isInPictureInPictureMode()) return;
+        if (!isPadLiveFullscreenMode() || isRotate() || inPictureInPictureMode()) return;
         requestOrientation("enter-fullscreen-pad", getFullscreenOrient());
         if (!ResUtil.isLand(this)) return;
         enterFullscreenLive();
@@ -640,7 +649,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void applyPadLiveMode() {
-        if (!ResUtil.isPad() || isInPictureInPictureMode()) return;
+        if (!ResUtil.isPad() || inPictureInPictureMode()) return;
         if (PlayerSetting.isPadLiveFullscreen()) {
             enterFullscreenLiveOnPad();
         } else if (!isRotate()) {
@@ -835,7 +844,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private boolean isEmbeddedLiveUi() {
-        return !ResUtil.isLand(this) && !isRotate() && !isInPictureInPictureMode();
+        return !ResUtil.isLand(this) && !isRotate() && !inPictureInPictureMode();
     }
 
     private void keepLiveMenuVisible() {
@@ -868,7 +877,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void showControl() {
-        if (service() == null || isInPictureInPictureMode()) return;
+        if (service() == null || inPictureInPictureMode()) return;
         setPlayParamsState();
         boolean embedded = isEmbeddedLiveUi();
         if (!embedded && isVisible(mBinding.recycler)) hideUI(false);
@@ -910,7 +919,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void showInfo() {
-        mBinding.widget.infoPip.setVisibility(isInPictureInPictureMode() ? View.VISIBLE : View.GONE);
+        mBinding.widget.infoPip.setVisibility(inPictureInPictureMode() ? View.VISIBLE : View.GONE);
         mBinding.widget.info.setVisibility(isInPictureInPictureMode() ? View.GONE : View.VISIBLE);
         setR3Callback();
         hideControl();

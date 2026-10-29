@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.player.exo;
 
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -7,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ExoTunnelingRuntimeState {
 
     public static final int BLACKLIST_THRESHOLD = 2;
-    private static final ConcurrentHashMap<String, AtomicInteger> failures = new ConcurrentHashMap<>();
+    private static final Map<String, AtomicInteger> failures = new ConcurrentHashMap<>();
 
     private ExoTunnelingRuntimeState() {
     }

@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.custom;
 
+import java.util.Map;
 import androidx.annotation.NonNull;
 import androidx.collection.ArrayMap;
 import androidx.leanback.widget.ListRow;
@@ -14,7 +15,10 @@ public class CustomSelector extends PresenterSelector {
     private final Set<Presenter> presenters = new LinkedHashSet<>();
     private final ArrayMap<Key, Presenter> cacheMap = new ArrayMap<>();
     private final ArrayMap<Class<?>, Presenter> singleMap = new ArrayMap<>();
-    private final ArrayMap<Class<?>, ArrayMap<Class<? extends Presenter>, Presenter>> nestedMap = new ArrayMap<>();
+    // 静态类型用 Map（Android 6.0 上 Map.computeIfAbsent 这类 Java 8 default 方法
+    // 不可用，Map 接口形式才能被 core library desugaring 改写）；值仍用 ArrayMap，
+    // 因为下面的 valueAt/keyAt 是 ArrayMap 专有方法。
+    private final Map<Class<?>, ArrayMap<Class<? extends Presenter>, Presenter>> nestedMap = new ArrayMap<>();
 
     public void addPresenter(Class<?> cls, Presenter presenter) {
         singleMap.put(cls, presenter);
@@ -23,7 +27,13 @@ public class CustomSelector extends PresenterSelector {
     }
 
     public void addPresenter(Class<?> cls, Presenter presenter, Class<? extends Presenter> childType) {
-        nestedMap.computeIfAbsent(cls, k -> new ArrayMap<>()).put(childType, presenter);
+        // 不用 Map.computeIfAbsent（Java 8 default 方法，API 23 不存在），改为 get/put。
+        ArrayMap<Class<? extends Presenter>, Presenter> map = nestedMap.get(cls);
+        if (map == null) {
+            map = new ArrayMap<>();
+            nestedMap.put(cls, map);
+        }
+        map.put(childType, presenter);
         presenters.add(presenter);
         cacheMap.clear();
     }

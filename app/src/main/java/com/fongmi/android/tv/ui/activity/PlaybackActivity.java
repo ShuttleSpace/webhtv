@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.activity;
 
+import android.os.Build;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -12,6 +13,7 @@ import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewTreeObserver;
+import android.view.Display;
 import android.view.WindowManager;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -418,6 +420,10 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     }
 
     private void closePiP() {
+        // Activity.isInPictureInPictureMode() 是 API 24 (Android 7.0) 才有的方法，
+        // 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
+        // （已在真机 192.168.8.5 上复现于 PlaybackActivity.closePiP）。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
         if (!isInPictureInPictureMode()) return;
         detach();
         finish();
@@ -504,10 +510,25 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
                 + " content=" + viewSize(content)
                 + " surface=" + surfaceName(surface) + ":" + viewSize(surface)
                 + " holder=" + surfaceHolderSize(surface)
-                + " rotation=" + (getDisplay() == null ? -1 : getDisplay().getRotation())
+                + " rotation=" + displayRotation()
                 + " orientation=" + getResources().getConfiguration().orientation;
         Log.d(SIZE_TAG, message);
         if (SpiderDebug.isEnabled()) SpiderDebug.log("surface-size", "%s", message);
+    }
+
+    /**
+     * 当前屏幕旋转角。Activity.getDisplay() 是 API 30 (Android 11) 才有的方法，
+     * 在 Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
+     * （已在真机 192.168.8.5 上复现于 PlaybackActivity.logSurfaceState）。
+     */
+    private int displayRotation() {
+        try {
+            WindowManager manager = getWindowManager();
+            Display display = manager == null ? null : manager.getDefaultDisplay();
+            return display == null ? -1 : display.getRotation();
+        } catch (Throwable t) {
+            return -1;
+        }
     }
 
     private static String viewSize(View view) {

@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.dialog;
 
+import android.os.Build;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -3085,7 +3086,12 @@ public final class RemoteTrustDialog {
         input.setSingleLine(singleLine);
         input.setTextSize(14);
         input.setMinHeight(dp(context, 46));
-        input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        // View.setImportantForAutofill(int) 是 API 26 (Android 8.0) 才有的方法，
+        // Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
+        // （同 GitCloudDialog.input，已在真机 192.168.8.5 上复现）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
         input.setSelectAllOnFocus(false);
         input.setTextColor(Color.BLACK);
         input.setHintTextColor(Color.parseColor("#666666"));

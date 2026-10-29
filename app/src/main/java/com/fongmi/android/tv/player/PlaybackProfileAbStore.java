@@ -23,7 +23,7 @@ public final class PlaybackProfileAbStore {
 
     private final Backend backend;
     private final Map<PlaybackProfileAbPolicy.GroupKey,
-            EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> groups =
+            Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> groups =
             new LinkedHashMap<>();
     private boolean loaded;
 
@@ -40,7 +40,7 @@ public final class PlaybackProfileAbStore {
         Sample stored = sample.recordedAtEpochMs() == nowEpochMs
                 ? sample
                 : sample.withRecordedAt(nowEpochMs);
-        EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
+        Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
                 groups.computeIfAbsent(
                         stored.groupKey(),
                         ignored -> new EnumMap<>(
@@ -80,7 +80,7 @@ public final class PlaybackProfileAbStore {
     private Snapshot snapshotLocked() {
         List<GroupSamples> result = new ArrayList<>();
         for (Map.Entry<PlaybackProfileAbPolicy.GroupKey,
-                EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
+                Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
                 : groups.entrySet()) {
             List<Sample> automatic = new ArrayList<>(entry.getValue()
                     .getOrDefault(PlaybackProfileAbPolicy.Arm.AUTO,
@@ -137,7 +137,7 @@ public final class PlaybackProfileAbStore {
 
     private void addLoaded(Sample sample) {
         if (sample == null || !sample.valid()) return;
-        EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
+        Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms =
                 groups.computeIfAbsent(
                         sample.groupKey(),
                         ignored -> new EnumMap<>(
@@ -155,11 +155,11 @@ public final class PlaybackProfileAbStore {
         if (nowEpochMs <= 0) return false;
         boolean changed = false;
         Iterator<Map.Entry<PlaybackProfileAbPolicy.GroupKey,
-                EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>>
+                Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>>
                 groupIterator = groups.entrySet().iterator();
         while (groupIterator.hasNext()) {
             Map.Entry<PlaybackProfileAbPolicy.GroupKey,
-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>
+                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>
                     group = groupIterator.next();
             for (List<Sample> samples : group.getValue().values()) {
                 changed |= samples.removeIf(sample -> expired(
@@ -201,7 +201,7 @@ public final class PlaybackProfileAbStore {
             PlaybackProfileAbPolicy.GroupKey victim = null;
             long oldestNewestSample = Long.MAX_VALUE;
             for (Map.Entry<PlaybackProfileAbPolicy.GroupKey,
-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
+                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>> entry
                     : groups.entrySet()) {
                 long newest = newestSampleAt(entry.getValue());
                 if (victim == null || newest < oldestNewestSample) {
@@ -215,7 +215,7 @@ public final class PlaybackProfileAbStore {
     }
 
     private static long newestSampleAt(
-            EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms) {
+            Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms) {
         long newest = -1;
         if (arms == null) return newest;
         for (List<Sample> samples : arms.values()) {
@@ -301,10 +301,10 @@ public final class PlaybackProfileAbStore {
 
     private static String encode(
             Map<PlaybackProfileAbPolicy.GroupKey,
-                    EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>>>
+                    Map<PlaybackProfileAbPolicy.Arm, List<Sample>>>
                     groups) {
         List<Sample> samples = new ArrayList<>();
-        for (EnumMap<PlaybackProfileAbPolicy.Arm, List<Sample>> arms
+        for (Map<PlaybackProfileAbPolicy.Arm, List<Sample>> arms
                 : groups.values()) {
             for (List<Sample> armSamples : arms.values()) {
                 samples.addAll(armSamples);

@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class PyLoader {
 
-    private final ConcurrentHashMap<String, Spider> spiders;
+    private final Map<String, Spider> spiders;
     private final Loader loader;
     private volatile String recent;
 
@@ -48,17 +48,27 @@ public class PyLoader {
 
     public Spider getSpider(String key, String api, String ext) {
         if (loader == null) return new SpiderNull();
-        return spiders.computeIfAbsent(key, k -> {
-            try {
-                Spider spider = loader.spider(api);
-                spider.siteKey = key;
-                spider.init(App.get(), normalizeExt(ext));
-                return spider;
-            } catch (Throwable e) {
-                e.printStackTrace();
-                return new SpiderNull();
-            }
-        });
+        // ConcurrentHashMap.computeIfAbsent 是 Java 8 / API 24 才有的方法，Android 6.0
+        // (API 23) 上会抛 NoSuchMethodError；用 synchronized + get/put 等价实现。
+        synchronized (spiders) {
+            Spider cached = spiders.get(key);
+            if (cached != null) return cached;
+            Spider spider = createSpider(key, api, ext);
+            spiders.put(key, spider);
+            return spider;
+        }
+    }
+
+    private Spider createSpider(String key, String api, String ext) {
+        try {
+            Spider spider = loader.spider(api);
+            spider.siteKey = key;
+            spider.init(App.get(), normalizeExt(ext));
+            return spider;
+        } catch (Throwable e) {
+            e.printStackTrace();
+            return new SpiderNull();
+        }
     }
 
     private String normalizeExt(String ext) {

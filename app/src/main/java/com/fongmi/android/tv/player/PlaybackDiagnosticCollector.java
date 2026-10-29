@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.player;
 
+import java.util.Map;
 import android.media.MediaCodec;
 import android.os.Build;
 import android.os.SystemClock;
@@ -21,7 +22,7 @@ import static com.github.catvod.crawler.diagnostics.DiagnosticEvent.Status.*;
 public final class PlaybackDiagnosticCollector {
     public record Context(String trace, long generation, long attempt, String mediaId, String role) {}
     private static final AtomicLong IDS = new AtomicLong();
-    private static final WeakHashMap<Object, String> OBJECT_IDS = new WeakHashMap<>();
+    private static final Map<Object, String> OBJECT_IDS = new WeakHashMap<>();
     private final String instance = id("player");
     private final String engine, version;
     private final AtomicLong sequence = new AtomicLong();

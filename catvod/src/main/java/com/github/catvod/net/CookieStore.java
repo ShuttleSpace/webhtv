@@ -12,7 +12,7 @@ import okhttp3.Response;
 
 public class CookieStore {
 
-    private static final ConcurrentHashMap<String, String> COOKIES = new ConcurrentHashMap<>();
+    private static final Map<String, String> COOKIES = new ConcurrentHashMap<>();
 
     public static void save(Request request) {
         if (request == null) return;

@@ -667,7 +667,7 @@ public class KaraokeTrackRepository {
 
     static String html(String text) {
         if (TextUtils.isEmpty(text)) return "";
-        return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
+        return com.fongmi.android.tv.utils.Util.fromHtml(text).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
     }
 
     static String normalizeSearch(String value) {

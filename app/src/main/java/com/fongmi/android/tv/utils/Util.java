@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
 import android.text.Html;
+import android.text.Spanned;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.Window;
@@ -123,10 +124,24 @@ public class Util {
         }
     }
 
+    /**
+     * 解析 HTML 文本。
+     * Html.fromHtml(String, int) 是 API 24 才引入的重载，Android 6.0 (API 23) 只有
+     * Html.fromHtml(String)，直接调用新重载会在 API 23 上抛 NoSuchMethodError
+     * （已在真机 192.168.8.5 上复现于 Vod.getName）。这里按版本分派统一兼容。
+     */
+    @SuppressWarnings("deprecation")
+    public static Spanned fromHtml(String text) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY);
+        }
+        return Html.fromHtml(text);
+    }
+
     public static String clean(String text) {
         if (!text.contains("<")) return text;
         StringBuilder sb = new StringBuilder();
-        text = Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString().replace("\u00A0", " ").replace("\u3000", " ");
+        text = fromHtml(text).toString().replace("\u00A0", " ").replace("\u3000", " ");
         for (String line : text.split("\\r?\\n")) sb.append(line.trim()).append("\n");
         return substring(sb.toString()).trim();
     }

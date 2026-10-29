@@ -91,7 +91,7 @@ public final class DiagnosticReport {
     private static final class Session {
         final String run, trace, instance, engine;
         final long attempt;
-        final LinkedHashMap<String, JsonObject> facts = new LinkedHashMap<>();
+        final Map<String, JsonObject> facts = new LinkedHashMap<>();
         final LinkedHashMap<String, String> errors = new LinkedHashMap<>();
         int video = -1, audio = -1;
         String videoId = "none", audioId = "none";

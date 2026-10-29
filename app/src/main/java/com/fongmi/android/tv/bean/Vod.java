@@ -132,7 +132,7 @@ public class Vod implements Parcelable, Diffable<Vod> {
     }
 
     public String getName() {
-        return TextUtils.isEmpty(vodName) ? "" : Html.fromHtml(vodName, Html.FROM_HTML_MODE_LEGACY).toString().trim();
+        return TextUtils.isEmpty(vodName) ? "" : Util.fromHtml(vodName).toString().trim();
     }
 
     public void setName(String vodName) {

@@ -17,7 +17,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
     }
 
     public static Evidence currentEvidence() {
-        EnumMap<Requirement, Coverage> coverage =
+        Map<Requirement, Coverage> coverage =
                 new EnumMap<>(Requirement.class);
 
         // Existing recovery is deliberately classified as limited until it
@@ -166,7 +166,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
     public record Evidence(Map<Requirement, Coverage> coverage) {
 
         public Evidence {
-            EnumMap<Requirement, Coverage> safe =
+            Map<Requirement, Coverage> safe =
                     new EnumMap<>(Requirement.class);
             if (coverage != null) safe.putAll(coverage);
             safe.entrySet().removeIf(entry -> entry.getValue() == null);
@@ -178,7 +178,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
         }
 
         public static Evidence allReliable() {
-            EnumMap<Requirement, Coverage> coverage =
+            Map<Requirement, Coverage> coverage =
                     new EnumMap<>(Requirement.class);
             for (Requirement requirement : Requirement.values()) {
                 coverage.put(requirement, Coverage.RELIABLE);
@@ -194,7 +194,7 @@ public final class PlaybackCompatibilityRetentionPolicy {
         public Evidence with(
                 Requirement requirement,
                 Coverage value) {
-            EnumMap<Requirement, Coverage> updated =
+            Map<Requirement, Coverage> updated =
                     new EnumMap<>(Requirement.class);
             updated.putAll(coverage);
             if (requirement != null) {

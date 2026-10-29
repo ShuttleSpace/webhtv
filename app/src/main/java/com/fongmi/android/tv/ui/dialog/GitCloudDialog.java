@@ -2155,7 +2155,12 @@ public class GitCloudDialog extends BaseAlertDialog {
         edit.setTextColor(Color.parseColor("#202124"));
         edit.setHintTextColor(Color.parseColor("#5F6368"));
         edit.setSelectAllOnFocus(false);
-        edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        // View.setImportantForAutofill(int) 是 API 26 (Android 8.0) 才有的方法，
+        // Android 6.0 (API 23) 上调用会抛 NoSuchMethodError
+        // （已在真机 192.168.8.5 上复现于 GitCloudDialog.input）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            edit.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        }
         if (password) edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         layout.addView(edit, new LinearLayoutCompat.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return new TextInput(layout, edit);

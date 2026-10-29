@@ -29,7 +29,7 @@ public class ScanTask {
     private static final int PORT_END = 9998;
     private static final int PARALLELISM = 64;
 
-    private final CopyOnWriteArrayList<Future<?>> future;
+    private final List<Future<?>> future;
     private final ExecutorService executor;
     private final OkHttpClient client;
     private Listener listener;

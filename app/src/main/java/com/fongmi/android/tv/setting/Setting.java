@@ -400,7 +400,13 @@ public class Setting {
         Locale locale = language == LANGUAGE_TRADITIONAL ? Locale.TRADITIONAL_CHINESE : Locale.SIMPLIFIED_CHINESE;
         Configuration config = new Configuration(context.getResources().getConfiguration());
         config.setLocale(locale);
-        config.setLocales(new LocaleList(locale));
+        // Configuration.setLocales(List<Locale>) 与 LocaleList 构造器都是 API 24
+        // (Android 7.0) 才有的，Android 6.0 (API 23) 上调用会抛 NoSuchMethodError。
+        // 本方法在 BaseActivity.attachBaseContext 里被调用，每个 Activity 都会走到，
+        // 因此必须做版本分派；API 23 用 setLocale（API 1 即有）即可。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            config.setLocales(new LocaleList(locale));
+        }
         return context.createConfigurationContext(config);
     }
 
@@ -434,7 +440,12 @@ public class Setting {
         float factor = getUiScaleFactor(scale);
         Configuration config = new Configuration(context.getResources().getConfiguration());
         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        int stableDensity = DisplayMetrics.DENSITY_DEVICE_STABLE > 0 ? DisplayMetrics.DENSITY_DEVICE_STABLE : metrics.densityDpi;
+        // DisplayMetrics.DENSITY_DEVICE_STABLE 是 API 24 (Android 7.0) 才有的静态字段，
+        // Android 6.0 (API 23) 上访问会抛 NoSuchFieldError。
+        int stableDensity = metrics.densityDpi;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && DisplayMetrics.DENSITY_DEVICE_STABLE > 0) {
+            stableDensity = DisplayMetrics.DENSITY_DEVICE_STABLE;
+        }
         int densityDpi = Math.max(DisplayMetrics.DENSITY_LOW, Math.round(stableDensity * factor));
         config.densityDpi = densityDpi;
         config.fontScale = 1.0f;

@@ -2,6 +2,7 @@ package com.fongmi.android.tv.service;
 
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -261,7 +262,14 @@ public class PlaybackService extends MediaLibraryService implements MediaLibrary
     }
 
     private void removeForeground() {
-        stopForeground(STOP_FOREGROUND_REMOVE);
+        // Service.stopForeground(int) 是 API 24 (Android 7.0) 才有的重载，Android 6.0
+        // (API 23) 上调用会抛 NoSuchMethodError
+        // （已在真机 192.168.8.5 上复现于 PlaybackService.removeForeground）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+        } else {
+            stopForeground(true);
+        }
     }
 
     private void saveProgress() {
