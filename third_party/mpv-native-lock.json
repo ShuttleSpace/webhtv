@@ -6,7 +6,7 @@
   "android": {
     "ndk_version": "29.0.14206865",
     "ndk_label": "r29",
-    "api_level": 24
+    "api_level": 23
   },
   "python_tools": {
     "meson": "1.11.2",
