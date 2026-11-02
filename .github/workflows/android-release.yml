@@ -1,6 +1,8 @@
 name: Android Release
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -151,8 +153,8 @@ jobs:
           ALIAS="${RELEASE_KEY_ALIAS:-$KEY_ALIAS}"
           KEY_PASS="${RELEASE_KEY_PASSWORD:-$STORE_PASSWORD}"
           if [ -z "$KS_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$ALIAS" ]; then
-            echo "::error title=Release signing not configured::Configure RELEASE_KEYSTORE_BASE64, RELEASE_KEY_ALIAS and RELEASE_STORE_PASSWORD in repository secrets."
-            exit 1
+            echo "::warning title=Release signing not configured::No keystore secrets found; APKs will be signed with the debug key. Set RELEASE_KEYSTORE_BASE64, RELEASE_KEY_ALIAS and RELEASE_STORE_PASSWORD to use a release keystore."
+            exit 0
           fi
           mkdir -p app/signing
           printf '%s' "$KS_BASE64" | base64 --decode > app/signing/release.jks

@@ -20,6 +20,18 @@ WebHomeTV 是基于 [FongMi](https://github.com/FongMi/TV) / CatVod 生态二次
 
 以上能力集中在设置页的"增强功能"入口,手机端和电视端均为独立设置页。
 
+## 本仓库改动说明（dev 分支）
+
+`dev` 分支在官方 `webhtv/webhtv` 基础上，将打包使用的原生库下放到 **Android 6.0（API 23）**，使应用可安装到 Android 6.0 设备。相对上游 `main` 的本地改动如下：
+
+- 重建 MPV / FFmpeg / libplacebo 全家桶（`app/src/{arm64_v8a,armeabi_v7a}/assets/mpv-libs/*` 下的 `libmpv.so`、`libmvcodec.so`、`libmvformat.so`、`libmvutil.so`、`libmwscale.so`、`libmwresample.so`、`libmvfilter.so`、`libmvdevice.so`、`libplayer.so`），构建目标由 `api: 24` 降为 `api: 23`；`libmpv.so` 体积明显下降（arm64 约 17.8 MB → 11.4 MB，armv7 约 14.6 MB → 10.3 MB）。
+- 重建 Exo ASS 渲染库 `third_party/exo-ass-native/prebuilt/{arm64-v8a,armeabi-v7a}/libexo_ass.so`，同样以 `api: 23` 构建，并同步更新 `MANIFEST.sha256` 与 `build-provenance.json`。
+- 更新原生构建锁定文件 `third_party/{dvd-native-lock,exo-ass-lock,mpv-native-lock}.json` 中的 `api` 字段为 `23`，并记录新的静态归档哈希（`libfontconfig.a`、`libxml2.a` 等）。
+- `gradlew` 恢复可执行权限位（`100644` → `100755`）。
+- `minSdk` 同步为 23（见 `gradle/libs.versions.toml`）。
+
+> 这些改动仅替换已提交的原生二进制与对应锁定/校验文件，不修改 Java/Kotlin 业务代码。CI 直接打包仓库内已提交的原生二进制，不会现场重编原生库。
+
 ## 效果演示
 
 https://github.com/user-attachments/assets/984c274f-8a9b-4857-b641-d251e061f5cc
@@ -79,7 +91,7 @@ WebHome 主页、扩展、模板、示例和 AI skills 统一放在 [webhome-dev
 - 项目使用纯命令行工具链，不依赖任何 IDE。必须在 `JAVA_HOME`/`PATH` 中配置独立 JDK 21，并单独配置 Android SDK Command-line Tools。
 - 需要 JDK 21；当前 `sourceCompatibility` / `targetCompatibility` 均为 Java 21。
 - Python 3.10。Chaquo 运行时和构建时 Python 均固定为 3.10，仅安装 Python 3.11/3.12/3.13 会失败。
-- Android SDK Platform 37 和 Build Tools 37.0.0。当前 `compileSdk=37`、`minSdk=24`、`targetSdk=28`。
+- Android SDK Platform 37 和 Build Tools 37.0.0。当前 `compileSdk=37`、`minSdk=23`、`targetSdk=28`。
 - Android NDK 29.0.14206865（r29）用于重建 MPV/FFmpeg/libplacebo 和 MPV JNI；NDK 28.2.13676358（r28c）继续用于 IJK/DVD。普通 Gradle 打包直接使用仓库已提交二进制，不要求安装 NDK。`scripts/build_mpv_player_jni.sh` 只重建 JNI 桥接库 `libplayer.so`，不会重编 `libmpv.so`、FFmpeg 或 libplacebo。
 - 使用仓库内置 Gradle Wrapper：Gradle 9.5.1，Android Gradle Plugin 9.2.1。
 - 能访问 Maven Central、Google Maven、Gradle Plugin Portal 和 JitPack。仓库内已带定制 Media3、nextlib 和本地 AAR，但普通 Android 依赖仍需要联网下载。
@@ -325,7 +337,12 @@ adb install -r app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-
 
 ### GitHub 手动发布
 
-仓库内置 `.github/workflows/android-release.yml`,只支持在 GitHub Actions 页面手动触发,不会在每次 push 代码时自动打包。默认 tag 会从 `app/build.gradle` 读取当前 `versionName`:稳定版生成 `v<versionName>-yyyyMMddHHmm`;在 `fongmi-sync` 分支选择 `auto` 通道时生成测试版 `v<versionName>-beta-yyyyMMddHHmm`,APK/JSON 文件名同步追加 `-beta`。
+仓库内置 `.github/workflows/android-release.yml`,支持两种触发方式：
+
+- **推送到 `dev` 分支自动发布**：每次向 `dev` 推送都会自动构建 4 个 release APK 并创建 GitHub Release（tag 取当前 `versionName` + 上海时区时间戳 `v<versionName>-yyyyMMddHHmm`）。
+- **在 GitHub Actions 页面手动触发**（`workflow_dispatch`），可自定义 `release_tag`、`release_channel`、`release_notes`、`prerelease`、`sync_cnb`、`publish_oci`。
+
+手动触发时,默认 tag 从 `app/build.gradle` 读取当前 `versionName`:稳定版生成 `v<versionName>-yyyyMMddHHmm`;在 `fongmi-sync` 分支选择 `auto` 通道时生成测试版 `v<versionName>-beta-yyyyMMddHHmm`,APK/JSON 文件名同步追加 `-beta`。
 
 工作流会构建 4 个 release APK,生成同名更新清单 JSON 并发布到 GitHub Release。JSON 默认使用 GitHub Release 固定版本直链，不依赖 CNB 可用性。CNB 同步默认关闭，仅在确认内容权利、平台政策和流量用途后作为可选镜像手动开启。正式发布前建议在 GitHub Secrets 配置:
 
@@ -339,7 +356,7 @@ CNB_TOKEN                # 可选，CNB 镜像令牌；仅存 GitHub Secret，�
 
 CNB 可选镜像默认目标为 `https://cnb.cool/fish2035/webhtv-release.git`,仓库标识为 `fish2035/webhtv-release`。`CNB Release Sync` 手动补同步时可通过输入参数临时指定其他仓库。同步脚本只会在 CNB 镜像仓库内将 JSON 改写为 `https://cnb.cool/<slug>/-/releases/download/<tag>/<apk>`；GitHub Release 中的 JSON 仍指向 GitHub。
 
-GitHub Actions 正式发布必须配置签名 secrets,否则会直接失败,避免使用 runner 临时 debug key 生成无法覆盖安装的 APK。
+GitHub Actions 发布**不强制**配置签名 secrets：未配置时自动回退到 debug 签名生成可安装的 Release APK；配置 `RELEASE_KEYSTORE_BASE64` / `RELEASE_KEY_ALIAS` / `RELEASE_STORE_PASSWORD` 等 secrets 后改用正式签名。建议正式分发前配置 release 签名，避免 debug key 生成的 APK 无法覆盖升级。
 
 如果 CNB 同步失败,不需要重新打包，GitHub Release 和应用更新清单仍可独立使用。修正 `CNB_TOKEN` 或网络问题后,在 GitHub Actions 手动运行 `CNB Release Sync`,填写已有 `release_tag` 即可补同步；`release_tag` 留空时同步最新 release。令牌不得写入仓库、日志或 workflow 参数；曾在聊天、issue 或日志中暴露的令牌必须立即吊销。
 
