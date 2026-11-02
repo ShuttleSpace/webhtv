@@ -72,14 +72,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      # NOTE: this API-23 rebuild's bundled libmpv.so is missing a few of the
-      # WebHTV FEL DoVi markers the verifier expects unconditionally (e.g.
-      # "WebHTV FEL GPU staging:"). Those markers are not required for the
-      # app to run on Android 6.0, so we keep the check for visibility but do
-      # not let it block the release. Re-enable strict verification once the
-      # native libs are rebuilt from a source that includes those markers.
       - name: Verify bundled MPV native assets
-        continue-on-error: true
         run: bash scripts/verify_mpv_native_assets.sh --require-elf
 
       - name: Set up Android SDK

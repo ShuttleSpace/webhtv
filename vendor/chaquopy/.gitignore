@@ -1,2 +1,7 @@
-build/
-.gradle/
+# NOTE: these patterns must stay root-anchored (leading `/`). A bare `build/`
+# matches ANY directory so named, and the vendored pip contains the real source
+# directory `pip/_internal/operations/build/`, which would then be silently
+# excluded from the repo and break a fresh CI build with
+# `ModuleNotFoundError: No module named 'pip._internal.operations.build'`.
+/build/
+/.gradle/

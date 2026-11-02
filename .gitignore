@@ -3,6 +3,9 @@
 .vscode/
 .gradle/
 build/
+# Vendored Chaquopy ships real source under pip/_internal/operations/build/;
+# a bare `build/` rule would exclude it and break fresh CI builds.
+!vendor/chaquopy/gradle-plugin/src/main/python/pip/_internal/operations/build/
 dist/
 out/
 !third_party/mpv-native-overrides/aimagereader-stable/video/out/
