@@ -29,6 +29,7 @@ WebHomeTV 是基于 [FongMi](https://github.com/FongMi/TV) / CatVod 生态二次
 - 更新原生构建锁定文件 `third_party/{dvd-native-lock,exo-ass-lock,mpv-native-lock}.json` 中的 `api` 字段为 `23`，并记录新的静态归档哈希（`libfontconfig.a`、`libxml2.a` 等）。
 - `gradlew` 恢复可执行权限位（`100644` → `100755`）。
 - `minSdk` 同步为 23（见 `gradle/libs.versions.toml`）。
+- 新增 **局域网设置服务**（本仓库功能，非上游）：复用 App 内已有的局域网 HTTP 服务（`Server`/`Nano`，端口 9978 起），新增 `/setting` 页面与 `/setting/schema`、`/setting/save` 接口。手机或电脑与电视同一局域网时，可通过 `http://<电视IP>:9978/setting` 或扫描设置页「局域网设置」弹出的二维码打开，查看并修改全部应用级设置（网络/DoH、代理、语言、界面缩放、壁纸、播放与筛选、更新源、调试日志等），保存后写入同一个 `SharedPreferences` 并立即热生效（代理 `ProxySetting.apply()`、DoH 重新设置、语言触发界面重建、壁纸/排版触发刷新）。与已有 `/m` 管理页一致，仅局域网可达、无额外鉴权。
 
 > 这些改动仅替换已提交的原生二进制与对应锁定/校验文件，不修改 Java/Kotlin 业务代码。CI 直接打包仓库内已提交的原生二进制，不会现场重编原生库。
 

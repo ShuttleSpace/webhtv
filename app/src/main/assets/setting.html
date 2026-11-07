@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>WebHTV 设置</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --fg:#1f2124; --muted:#6b7280;
+    --accent:#3b7cff; --line:#e5e7eb; --ok:#16a34a; --err:#dc2626;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#111214; --card:#1c1d20; --fg:#eceff1; --muted:#9aa1a9; --line:#2a2c30; --accent:#6f9dff; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--fg);line-height:1.5}
+  header{position:sticky;top:0;z-index:10;background:var(--card);border-bottom:1px solid var(--line);padding:14px 16px;display:flex;align-items:center;gap:12px}
+  header h1{font-size:17px;margin:0;flex:1}
+  .save{border:0;background:var(--accent);color:#fff;font-size:14px;padding:8px 16px;border-radius:18px;cursor:pointer;font-weight:600}
+  .save:disabled{opacity:.5;cursor:default}
+  main{max-width:720px;margin:0 auto;padding:12px 12px 96px}
+  .group{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
+  .group>h2{font-size:13px;color:var(--muted);font-weight:600;margin:0;padding:12px 14px 4px;text-transform:uppercase;letter-spacing:.4px}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+  .row:first-of-type{border-top:0}
+  .row .label{flex:1;min-width:0}
+  .row .label .name{font-size:15px}
+  .row .label .hint{font-size:12px;color:var(--muted);margin-top:2px}
+  input[type=text],input[type=number],textarea,select{
+    font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;max-width:58%;min-width:120px;font-family:inherit
+  }
+  textarea{width:100%;max-width:100%;resize:vertical;min-height:64px}
+  .switch{position:relative;width:46px;height:28px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:var(--line);border-radius:28px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;width:22px;height:22px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .switch input:checked+.slider{background:var(--accent)}
+  .switch input:checked+.slider:before{transform:translateX(18px)}
+  .full{flex-direction:column;align-items:stretch}
+  .full input,.full textarea{max-width:100%}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#202124;color:#fff;padding:10px 18px;border-radius:20px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:50;max-width:90vw}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--err)}
+  .addr{font-size:12px;color:var(--muted);text-align:center;margin:8px 0 0}
+  .empty{color:var(--muted);text-align:center;padding:40px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>WebHTV 设置</h1>
+  <button class="save" id="save" disabled>保存</button>
+</header>
+<main>
+  <div id="content" class="empty">正在加载设置…</div>
+  <p class="addr" id="addr"></p>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+(function(){
+  var dirty=false, schema=null;
+  var $=function(s){return document.querySelector(s)};
+  var content=$('#content'), saveBtn=$('#save'), toast=$('#toast');
+
+  function showToast(msg, isErr){
+    toast.textContent=msg; toast.className='toast show'+(isErr?' err':'');
+    setTimeout(function(){toast.className='toast'+(isErr?' err':'')},2200);
+  }
+  function markDirty(){
+    dirty=true; saveBtn.disabled=false;
+  }
+  function setVal(input){
+    input.dataset.orig = (input.type==='checkbox') ? String(input.checked) : input.value;
+  }
+  function changed(input){
+    return (input.type==='checkbox') ? String(input.checked)!==input.dataset.orig : input.value!==input.dataset.orig;
+  }
+  function collect(){
+    var values={};
+    content.querySelectorAll('[data-key]').forEach(function(input){
+      if(!changed(input)) return;
+      var k=input.dataset.key, t=input.dataset.type;
+      if(t==='toggle') values[k]=input.checked;
+      else if(t==='number') values[k]=parseInt(input.value,10)||0;
+      else if(t==='select' && input.dataset.numeric==='1') values[k]=parseInt(input.value,10);
+      else values[k]=input.value;
+    });
+    return values;
+  }
+
+  function fieldRow(f){
+    var row=document.createElement('div'); row.className='row';
+    var labelWrap=document.createElement('div'); labelWrap.className='label';
+    var name=document.createElement('div'); name.className='name'; name.textContent=f.label;
+    labelWrap.appendChild(name);
+    var input, hint;
+    if(f.type==='toggle'){
+      input=document.createElement('label'); input.className='switch';
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.dataset.key=f.key; cb.dataset.type='toggle'; cb.checked=!!f.value;
+      var sl=document.createElement('span'); sl.className='slider';
+      input.appendChild(cb); input.appendChild(sl);
+      cb.addEventListener('change',function(){ if(changed(cb)) markDirty(); });
+      setVal(cb);
+    } else if(f.type==='select'){
+      input=document.createElement('select'); input.dataset.key=f.key; input.dataset.type='select';
+      var numeric = (typeof f.value==='number');
+      input.dataset.numeric = numeric?'1':'0';
+      var opts=f.options||[];
+      var cur=String(f.value);
+      var matched=false;
+      opts.forEach(function(o){
+        var op=document.createElement('option'); op.value=String(o.value); op.textContent=o.label;
+        if(String(o.value)===cur){ op.selected=true; matched=true; }
+        input.appendChild(op);
+      });
+      if(!matched && cur!==''){
+        var op=document.createElement('option'); op.value=cur; op.textContent=cur; input.appendChild(op);
+      }
+      input.addEventListener('change',function(){ if(changed(input)) markDirty(); });
+      setVal(input);
+    } else if(f.type==='textarea'){
+      row.classList.add('full');
+      input=document.createElement('textarea'); input.dataset.key=f.key; input.dataset.type='textarea'; input.value=f.value||'';
+      input.addEventListener('input',function(){ if(changed(input)) markDirty(); });
+      setVal(input);
+    } else if(f.type==='number'){
+      input=document.createElement('input'); input.type='number'; input.dataset.key=f.key; input.dataset.type='number'; input.value=f.value;
+      input.addEventListener('input',function(){ if(changed(input)) markDirty(); });
+      setVal(input);
+    } else {
+      input=document.createElement('input'); input.type='text'; input.dataset.key=f.key; input.dataset.type='text'; input.value=f.value||'';
+      input.addEventListener('input',function(){ if(changed(input)) markDirty(); });
+      setVal(input);
+    }
+    row.appendChild(labelWrap);
+    if(f.type!=='textarea') row.appendChild(input);
+    else row.appendChild(input);
+    if(f.type==='toggle'){ /* label already holds the input */ }
+    return row;
+  }
+
+  function render(data){
+    schema=data;
+    content.className='';
+    content.innerHTML='';
+    (data.groups||[]).forEach(function(g){
+      var sec=document.createElement('section'); sec.className='group';
+      var h=document.createElement('h2'); h.textContent=g.title; sec.appendChild(h);
+      (g.fields||[]).forEach(function(f){ sec.appendChild(fieldRow(f)); });
+      content.appendChild(sec);
+    });
+    if(!(data.groups||[]).length){ content.innerHTML='<div class="empty">没有可编辑的设置</div>'; }
+    saveBtn.disabled=!dirty;
+  }
+
+  function load(){
+    fetch('setting/schema',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+      if(d&&d.ok) render(d); else throw new Error(d&&d.message||'加载失败');
+    }).catch(function(e){ content.textContent='加载失败：'+e.message; });
+  }
+
+  saveBtn.addEventListener('click',function(){
+    var values=collect();
+    if(!Object.keys(values).length){ showToast('没有修改'); return; }
+    saveBtn.disabled=true;
+    fetch('setting/save',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({values:values})
+    }).then(function(r){return r.json()}).then(function(d){
+      if(d&&d.ok){
+        showToast('已保存，已同步到 TV（'+(d.applied||0)+' 项）');
+        content.querySelectorAll('[data-key]').forEach(setVal);
+        dirty=false; saveBtn.disabled=true;
+      } else {
+        showToast((d&&d.message)||'保存失败',true); saveBtn.disabled=false;
+      }
+    }).catch(function(e){ showToast('保存失败：'+e.message,true); saveBtn.disabled=false; });
+  });
+
+  fetch('device',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.ip) $('#addr').textContent='TV 局域网地址：'+d.ip.replace(/\/$/,'')+'/setting';
+  }).catch(function(){});
+
+  load();
+})();
+</script>
+</body>
+</html>
