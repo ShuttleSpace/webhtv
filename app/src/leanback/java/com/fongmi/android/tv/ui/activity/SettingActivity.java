@@ -2,14 +2,9 @@ package com.fongmi.android.tv.ui.activity;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
 import android.os.Bundle;
 import android.text.TextUtils;
-import android.view.Gravity;
 import android.view.View;
-import android.widget.ImageView;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import androidx.viewbinding.ViewBinding;
 
@@ -31,7 +26,6 @@ import com.fongmi.android.tv.impl.LiveListener;
 import com.fongmi.android.tv.impl.SiteListener;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.setting.Setting;
-import com.fongmi.android.tv.server.Server;
 import com.fongmi.android.tv.ui.base.BaseActivity;
 import com.fongmi.android.tv.ui.dialog.AboutDialog;
 import com.fongmi.android.tv.ui.dialog.ConfigDialog;
@@ -45,7 +39,6 @@ import com.fongmi.android.tv.utils.AppVersion;
 import com.fongmi.android.tv.utils.FileUtil;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
-import com.fongmi.android.tv.utils.QRCode;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.github.catvod.bean.Doh;
 import com.github.catvod.net.OkHttp;
@@ -138,7 +131,6 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
         mBinding.wallDefault.setOnClickListener(this::setWallDefault);
         mBinding.wallRefresh.setOnClickListener(this::setWallRefresh);
         mBinding.wallRefresh.setOnLongClickListener(this::onWallHistory);
-        mBinding.lan.setOnClickListener(this::onLanSetting);
     }
 
     @Override
@@ -329,32 +321,6 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
             }
             }, progress::update);
         });
-    }
-
-    private void onLanSetting(View view) {
-        Server.get().start();
-        String url = Server.get().getAddress(false) + "/setting";
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.setBackgroundColor(Color.WHITE);
-        int pad = ResUtil.dp2px(20);
-        box.setPadding(pad, pad, pad, pad);
-        ImageView image = new ImageView(this);
-        image.setImageBitmap(QRCode.getLightBitmap(url, 180, 1));
-        box.addView(image);
-        TextView text = new TextView(this);
-        text.setText(url);
-        text.setTextColor(0xFF202124);
-        text.setTextSize(13);
-        text.setGravity(Gravity.CENTER);
-        text.setPadding(0, ResUtil.dp2px(12), 0, 0);
-        box.addView(text);
-        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_WebHTV_LightDialog)
-                .setTitle(R.string.setting_lan)
-                .setView(box)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
     }
 
     private void onRestore(View view) {

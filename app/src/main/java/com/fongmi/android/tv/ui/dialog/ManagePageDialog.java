@@ -21,6 +21,9 @@ import com.fongmi.android.tv.service.ManageService;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.ResUtil;
+import android.widget.ImageView;
+
+import com.fongmi.android.tv.utils.QRCode;
 import com.github.catvod.crawler.SpiderDebug;
 
 public final class ManagePageDialog {
@@ -47,6 +50,7 @@ public final class ManagePageDialog {
 
         DialogManagePageBinding binding = DialogManagePageBinding.inflate(LayoutInflater.from(activity));
         binding.message.setText(activity.getString(R.string.manage_page_dialog_message, lanUrl, localUrl));
+        binding.qrcode.setImageBitmap(QRCode.getLightBitmap(lanUrl, 200, 1));
         setScrollHeight(activity, binding.contentScroll, 0.34f, 300);
 
         Dialog dialog = LightDialog.create(activity, null, binding.getRoot(), 0.68f, 0.92f, 640);
