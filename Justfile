@@ -21,18 +21,22 @@
 #
 # git 基线锁定（可复现性）
 # ------------------------
-#  - 适配基点 commit 记录在 patches/android6-baseline.txt。android6-patch 在
-#    应用补丁前会校验当前 HEAD 是否等于该基线；不一致则中止，避免在不匹配的
-#    提交上打补丁导致冲突或不可复现。
-#  - just android6-pin 可将当前 HEAD 重写为新的适配基点（仅在确认上游已前进、
-#    且补丁已针对新提交重新生成后使用）。
+#  - 适配基点默认由 Justfile 的 android6-baseline 动态推导：引入 minSdk = "23"
+#    的那个提交的父提交（即原始 API 24+ 状态），无需每次手工更新本文件。
+#  - android6-patch 在“适配已生效（minSdk = "23" 已提交）”时直接跳过补丁与
+#    基线校验；因此在本仓库 dev 等固化分支上构建无需再维护锁定基线。
+#  - 仅当需要在干净 API 24+ 树上重新打补丁时，才要求 HEAD 与适配基点一致；
+#    此时可用 just android6-baseline 查看基点，或用 just android6-pin 锁定。
+#  - 本文件（patches/android6-baseline.txt）仅作回退；其哈希应与动态推导一致。
 #
+
 # 常用任务
 # --------
 #   just                        列出全部任务
 #   just android6-status        查看当前处于 Android 6 / 原始 状态
 #   just android6-patch         应用 Android 6 全部改动（幂等）
-#   just android6-build         构建 leanback arm64 debug APK（默认 ABI）
+#   just android6-build         构建 leanback 指定 ABI 的 release APK（默认 arm64_v8a）
+#   just android6-release       构建全部 4 个 release APK（tv + mobile，arm64 + armeabi）
 #   just android6-build-all     干净机首选：重建原生库 + 构建 APK
 #   just android6-revert        回退所有 Android 6 改动（恢复 API 24+ 状态）
 #   just android6-diff          若手工改了源码，重新生成补丁文件
@@ -70,7 +74,7 @@ android6-status:
         if [ "$CURRENT" = "$PINNED" ]; then
             echo "  匹配 ($CURRENT)"
         else
-            echo "  不匹配：当前 HEAD=$CURRENT，锁定基线=$PINNED"
+            echo "  不匹配：当前 HEAD=$CURRENT, 锁定基线=$PINNED"
         fi
     else
         echo "  未锁定（缺少 {{BASELINE_FILE}}，运行 just android6-pin）"
@@ -79,9 +83,11 @@ android6-status:
     echo "== minSdk (libs.versions.toml) =="
     grep -E '^minSdk' gradle/libs.versions.toml || true
     echo
-    echo "== 源码补丁是否已应用 =="
-    if git apply --reverse --check "{{PATCH}}" 2>/dev/null; then
-        echo "  已应用  -> 当前为 Android 6 (API 23) 状态"
+    echo "== 适配状态 (minSdk) =="
+    if grep -qE '^minSdk = "23"' gradle/libs.versions.toml; then
+        echo "  已生效  -> 当前为 Android 6 (API 23) 状态（已提交）"
+    elif git apply --reverse --check "{{PATCH}}" 2>/dev/null; then
+        echo "  已应用（工作树）  -> Android 6 (API 23) 状态"
     else
         echo "  未应用  -> 当前为原始 (API 24+) 状态"
     fi
@@ -111,28 +117,25 @@ android6-patch:
         echo "错误：未找到 mise，请先安装 https://mise.jdx.dev" >&2
         exit 2
     fi
-    # 0) 若源码补丁已应用（含已提交到 HEAD 的情况），跳过 git apply；
-    #    否则要求当前 HEAD 与记录的适配基点一致，避免在不匹配的提交上打补丁。
-    if git apply --reverse --check "{{PATCH}}" 2>/dev/null; then
-        echo "源码补丁已应用（或已提交），跳过 git apply"
+    # 0) 适配已生效（minSdk = "23" 已提交/已激活）→ 无需打补丁，跳过基线校验。
+    #    这样在本仓库 dev 等“适配已固化”的分支上构建无需每次更新锁定基线。
+    if grep -qE '^minSdk = "23"' gradle/libs.versions.toml; then
+        echo "当前为 Android 6 (API 23) 适配状态（已提交生效），跳过补丁与基线校验"
     else
-        if [ ! -f "{{BASELINE_FILE}}" ]; then
-            echo "错误：缺少基线文件 {{BASELINE_FILE}}，请先运行 just android6-pin" >&2
-            exit 3
-        fi
-        PINNED="$(grep -vE '^\s*#' "{{BASELINE_FILE}}" | tr -d '[:space:]' | head -n1)"
+        # 原始/pristine 路径：仅在需要把补丁打到干净 API 24+ 树时使用。
+        PINNED="$(just android6-baseline)"
         if [ -z "$PINNED" ]; then
-            echo "错误：基线文件 {{BASELINE_FILE}} 未包含任何 commit 哈希" >&2
+            echo "错误：无法确定适配基点（缺少 minSdk=23 历史且 {{BASELINE_FILE}} 为空）" >&2
             exit 3
         fi
         CURRENT="$(git rev-parse HEAD)"
         if [ "$CURRENT" != "$PINNED" ]; then
-            echo "错误：当前 HEAD ($CURRENT) 与锁定的 Android 6 基线 ($PINNED) 不一致。" >&2
+            echo "错误：当前 HEAD ($CURRENT) 与适配基点 ($PINNED) 不一致。" >&2
             echo "  - 若要回到基点：git checkout $PINNED" >&2
             echo "  - 若确认当前提交为新的适配基点：just android6-pin（将重写基线文件）" >&2
             exit 3
         fi
-        echo "git 基线校验通过：HEAD=$CURRENT (= 锁定基线)"
+        echo "git 基线校验通过：HEAD=$CURRENT (= 适配基点)"
         echo "应用源码补丁 ({{PATCH}}) ..."
         git apply "{{PATCH}}"
     fi
@@ -172,6 +175,22 @@ android6-revert:
     echo "回退完成：仓库已恢复为原始 (API 24+) 构建状态，其他平台可正常构建。"
 
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 动态推导适配基点（不需要手工维护 patches/android6-baseline.txt）
+# 基点 = 引入 minSdk = "23" 的那个提交的父提交（即原始 API 24+ 状态）。
+# 仅在 git 历史中找不到“引入 minSdk = "23"”的提交时，回退到基线文件。
+# -----------------------------------------------------------------------------
+android6-baseline:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ROOT}}"
+    INTRO="$(git log --format=%H -S'minSdk = "23"' -- gradle/libs.versions.toml | tail -n1)"
+    if [ -n "$INTRO" ]; then
+        git rev-parse "${INTRO}^"
+    elif [ -f "{{BASELINE_FILE}}" ]; then
+        grep -vE '^\s*#' "{{BASELINE_FILE}}" | tr -d '[:space:]' | head -n1
+    fi
+
 # 锁定 / 重锁 git 基线（适配基点 commit）
 # 仅在你确认“当前 HEAD 是 android6-api23.patch 的正确应用基点”时使用，
 # 例如上游已前进、且补丁已针对新提交重新生成（先 just android6-diff）。
@@ -294,8 +313,13 @@ android6-build ABI="arm64_v8a" MODE="Release":
     # 4) Chaquopy 插件构建期需要 python3.10（创建 venv / 运行 pip_install），
     #    把 mise 管理的 python 放到 PATH 最前（不再需要 -PbuildPython）。
     export PATH="$(mise where python)/bin:$PATH"
+    # 可选：本地无外网访问 Maven Central 时，用镜像 init 脚本（不写死路径，按需传入）
+    INIT_ARG=""
+    if [ -n "${WEBHTV_INIT_SCRIPT:-}" ] && [ -f "${WEBHTV_INIT_SCRIPT}" ]; then
+        INIT_ARG="-I ${WEBHTV_INIT_SCRIPT}"
+    fi
     echo "== 构建 assemble${FLAVOR}${MODE} (python3.10 via mise, chaquopy via vendor/chaquopy) =="
-    ./gradlew "assemble${FLAVOR}${MODE}" # 如果报错 state lock ，则是因为org.gradle.parallel=true+-no-daemon 在Gralde8.x下的已知bug.可以添加 --no-daemon --no-parallel 参数禁用
+    ./gradlew ${INIT_ARG} "assemble${FLAVOR}${MODE}" # 若报 state lock，是 Gradle8.x 的 org.gradle.parallel + -no-daemon 已知 bug，可加 --no-daemon --no-parallel
 
 # -----------------------------------------------------------------------------
 # 干净机首选：重建原生库 + 构建 APK
@@ -303,6 +327,37 @@ android6-build ABI="arm64_v8a" MODE="Release":
 android6-build-all ABI="arm64_v8a":
     android6-native
     android6-build "{{ABI}}"
+
+# -----------------------------------------------------------------------------
+# 构建全部 4 个 release APK（tv + mobile，arm64 + armeabi），输出到 Release/apk/
+# 用法: WEBHTV_INIT_SCRIPT=/tmp/aliyun.init.gradle just android6-release
+# 说明: 原生库以提交态 .so 资产打包，无需重建；此命令与 CI 构建矩阵一致。
+# -----------------------------------------------------------------------------
+android6-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ROOT}}"
+    # 1) 确保适配态/工具链就绪（幂等，已生效则跳过）
+    just android6-patch
+    # 2) 清理可能残留的失效本地代理（如 127.0.0.1:12334），避免 chaquo 下载被拦截
+    case "${HTTP_PROXY:-}${HTTPS_PROXY:-}" in
+        *127.0.0.1*12334*) unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ;;
+    esac
+    # 3) Chaquopy 插件构建期需要 python3.10（创建 venv / 运行 pip_install）
+    export PATH="$(mise where python)/bin:$PATH"
+    # 4) 可选本地镜像 init 脚本（不写死路径）
+    INIT_ARG=""
+    if [ -n "${WEBHTV_INIT_SCRIPT:-}" ] && [ -f "${WEBHTV_INIT_SCRIPT}" ]; then
+        INIT_ARG="-I ${WEBHTV_INIT_SCRIPT}"
+    fi
+    rm -rf Release/apk
+    echo "== 构建 4 个 release APK（tv + mobile，arm64 + armeabi） =="
+    ./gradlew ${INIT_ARG} \
+      :app:assembleMobileArm64_v8aRelease \
+      :app:assembleMobileArmeabi_v7aRelease \
+      :app:assembleLeanbackArm64_v8aRelease \
+      :app:assembleLeanbackArmeabi_v7aRelease \
+      --no-daemon
 
 # -----------------------------------------------------------------------------
 # 重新生成补丁文件（保持 patch 与已提交状态同步）
@@ -317,13 +372,9 @@ android6-diff:
     set -euo pipefail
     cd "{{ROOT}}"
     mkdir -p patches
-    if [ ! -f "{{BASELINE_FILE}}" ]; then
-        echo "错误：缺少基线文件 {{BASELINE_FILE}}，请先运行 just android6-pin" >&2
-        exit 3
-    fi
-    PINNED="$(grep -vE '^\s*#' "{{BASELINE_FILE}}" | tr -d '[:space:]' | head -n1)"
+    PINNED="$(just android6-baseline)"
     if [ -z "$PINNED" ]; then
-        echo "错误：基线文件 {{BASELINE_FILE}} 未包含任何 commit 哈希" >&2
+        echo "错误：无法确定适配基点（缺少 minSdk=23 历史且 {{BASELINE_FILE}} 为空），请运行 just android6-pin" >&2
         exit 3
     fi
     git diff "$PINNED"..HEAD -- \
