@@ -22,6 +22,7 @@
   main{max-width:720px;margin:0 auto;padding:12px 12px 96px}
   .group{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
   .group>h2{font-size:13px;color:var(--muted);font-weight:600;margin:0;padding:12px 14px 4px;text-transform:uppercase;letter-spacing:.4px}
+  .group>.note{font-size:12px;color:var(--muted);line-height:1.5;padding:0 14px 8px}
   .row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
   .row:first-of-type{border-top:0}
   .row .label{flex:1;min-width:0}
@@ -83,6 +84,7 @@
       var k=input.dataset.key, t=input.dataset.type;
       if(t==='toggle') values[k]=input.checked;
       else if(t==='number') values[k]=parseInt(input.value,10)||0;
+      else if(t==='float') values[k]=parseFloat(input.value)||0;
       else if(t==='select' && input.dataset.numeric==='1') values[k]=parseInt(input.value,10);
       else values[k]=input.value;
     });
@@ -124,8 +126,10 @@
       input=document.createElement('textarea'); input.dataset.key=f.key; input.dataset.type='textarea'; input.value=f.value||'';
       input.addEventListener('input',function(){ if(changed(input)) markDirty(); });
       setVal(input);
-    } else if(f.type==='number'){
-      input=document.createElement('input'); input.type='number'; input.dataset.key=f.key; input.dataset.type='number'; input.value=f.value;
+    } else if(f.type==='number' || f.type==='float'){
+      input=document.createElement('input'); input.type='number';
+      if(f.type==='float') input.step='any';
+      input.dataset.key=f.key; input.dataset.type=f.type; input.value=f.value;
       input.addEventListener('input',function(){ if(changed(input)) markDirty(); });
       setVal(input);
     } else {
@@ -147,6 +151,7 @@
     (data.groups||[]).forEach(function(g){
       var sec=document.createElement('section'); sec.className='group';
       var h=document.createElement('h2'); h.textContent=g.title; sec.appendChild(h);
+      if(g.note){ var note=document.createElement('div'); note.className='note'; note.textContent=g.note; sec.appendChild(note); }
       (g.fields||[]).forEach(function(f){ sec.appendChild(fieldRow(f)); });
       content.appendChild(sec);
     });
