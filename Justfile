@@ -291,16 +291,20 @@ android6-clean:
     echo "已清理 app/.cxx（下次构建会重新配置 CMake）"
 
 # -----------------------------------------------------------------------------
-# 构建 APK（默认 leanback arm64 debug）。ABI 可选：arm64_v8a（默认）/ armeabi_v7a
+# 构建 APK（默认 leanback arm64 release）。ABI 可选：arm64_v8a（默认）/ armeabi_v7a
+# 用法: just android6-build [ABI] [MODE]   （位置参数或 KEY=VALUE 均可，如 ABI=arm64_v8a）
 # -----------------------------------------------------------------------------
 android6-build ABI="arm64_v8a" MODE="Release":
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{ROOT}}"
-    case "{{ABI}}" in
+    # 兼容「位置参数」与「KEY=VALUE」两种写法（部分 just 版本不解析命名参数）
+    ABI_VAL="{{ABI}}"; ABI_VAL="${ABI_VAL#ABI=}"
+    MODE_VAL="{{MODE}}"; MODE_VAL="${MODE_VAL#MODE=}"
+    case "$ABI_VAL" in
         arm64_v8a)   FLAVOR=LeanbackArm64_v8a   ;;
         armeabi_v7a) FLAVOR=LeanbackArmeabi_v7a ;;
-        *) echo "未知 ABI: {{ABI}}（请用 arm64_v8a 或 armeabi_v7a）" >&2; exit 2 ;;
+        *) echo "未知 ABI: $ABI_VAL（请用 arm64_v8a 或 armeabi_v7a）" >&2; exit 2 ;;
     esac
     # 1) 应用补丁（幂等）
     just android6-patch
@@ -313,13 +317,16 @@ android6-build ABI="arm64_v8a" MODE="Release":
     # 4) Chaquopy 插件构建期需要 python3.10（创建 venv / 运行 pip_install），
     #    把 mise 管理的 python 放到 PATH 最前（不再需要 -PbuildPython）。
     export PATH="$(mise where python)/bin:$PATH"
-    # 可选：本地无外网访问 Maven Central 时，用镜像 init 脚本（不写死路径，按需传入）
+    # 5) 本地镜像 init 脚本（仅当无法直连 Maven Central 时需要）：
+    #    默认读取 ~/.local/share/webntv/aliyun.init.gradle，可用 WEBHTV_INIT_SCRIPT 覆盖。
     INIT_ARG=""
     if [ -n "${WEBHTV_INIT_SCRIPT:-}" ] && [ -f "${WEBHTV_INIT_SCRIPT}" ]; then
         INIT_ARG="-I ${WEBHTV_INIT_SCRIPT}"
+    elif [ -f "${HOME}/.local/share/webntv/aliyun.init.gradle" ]; then
+        INIT_ARG="-I ${HOME}/.local/share/webntv/aliyun.init.gradle"
     fi
-    echo "== 构建 assemble${FLAVOR}${MODE} (python3.10 via mise, chaquopy via vendor/chaquopy) =="
-    ./gradlew ${INIT_ARG} "assemble${FLAVOR}${MODE}" # 若报 state lock，是 Gradle8.x 的 org.gradle.parallel + -no-daemon 已知 bug，可加 --no-daemon --no-parallel
+    echo "== 构建 assemble${FLAVOR}${MODE_VAL} (python3.10 via mise, chaquopy via vendor/chaquopy) =="
+    ./gradlew ${INIT_ARG} "assemble${FLAVOR}${MODE_VAL}" # 若报 state lock，是 Gradle8.x 的 org.gradle.parallel + -no-daemon 已知 bug，可加 --no-daemon --no-parallel
 
 # -----------------------------------------------------------------------------
 # 干净机首选：重建原生库 + 构建 APK
@@ -330,7 +337,7 @@ android6-build-all ABI="arm64_v8a":
 
 # -----------------------------------------------------------------------------
 # 构建全部 4 个 release APK（tv + mobile，arm64 + armeabi），输出到 Release/apk/
-# 用法: WEBHTV_INIT_SCRIPT=/tmp/aliyun.init.gradle just android6-release
+# 用法: just android6-release   （镜像脚本默认 ~/.local/share/webntv/aliyun.init.gradle，可用 WEBHTV_INIT_SCRIPT 覆盖）
 # 说明: 原生库以提交态 .so 资产打包，无需重建；此命令与 CI 构建矩阵一致。
 # -----------------------------------------------------------------------------
 android6-release:
@@ -345,10 +352,13 @@ android6-release:
     esac
     # 3) Chaquopy 插件构建期需要 python3.10（创建 venv / 运行 pip_install）
     export PATH="$(mise where python)/bin:$PATH"
-    # 4) 可选本地镜像 init 脚本（不写死路径）
+    # 4) 本地镜像 init 脚本（仅当无法直连 Maven Central 时需要）：
+    #    默认读取 ~/.local/share/webntv/aliyun.init.gradle，可用 WEBHTV_INIT_SCRIPT 覆盖。
     INIT_ARG=""
     if [ -n "${WEBHTV_INIT_SCRIPT:-}" ] && [ -f "${WEBHTV_INIT_SCRIPT}" ]; then
         INIT_ARG="-I ${WEBHTV_INIT_SCRIPT}"
+    elif [ -f "${HOME}/.local/share/webntv/aliyun.init.gradle" ]; then
+        INIT_ARG="-I ${HOME}/.local/share/webntv/aliyun.init.gradle"
     fi
     rm -rf Release/apk
     echo "== 构建 4 个 release APK（tv + mobile，arm64 + armeabi） =="
